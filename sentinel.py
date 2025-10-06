@@ -137,9 +137,11 @@ class Sentinel:
         :param max_lat: Максимальная широта.
         """
         self.bbox = BBox(bbox=[min_lon, min_lat, max_lon, max_lat], crs=CRS.WGS84)
+        return self.bbox
     
     def set_resolution(self, resolution):
         self.resolution = resolution
+        self.bbox_size = bbox_to_dimensions(self.bbox, resolution=resolution)
 
     def set_date(self, date: str = 'latest', num_days_back = 7):
         """
@@ -216,7 +218,6 @@ class Sentinel:
         return evalscript.replace("'", '"') # Заменяем одинарные кавычки на двойные для соответствия формату JSON
     
     def get_data(self, requested_layers:list):
-        bbox_size = bbox_to_dimensions(self.bbox, resolution=self.resolution)
         data_collection = DataCollection.SENTINEL2_L2A
         evalscript = self.create_evalscript(requested_layers)
         responses = [SentinelHubRequest.output_response(layer_id, MimeType.TIFF) for layer_id in requested_layers]
@@ -231,7 +232,7 @@ class Sentinel:
             ],
             responses=responses,
             bbox=self.bbox,
-            size=bbox_size,
+            size=self.bbox_size,
             config=self.config,
         )
         data = request.get_data(decode_data=True)

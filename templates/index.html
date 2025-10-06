@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Карта Sentinel</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-geosearch@3.11.0/dist/geosearch.css"/>
+    <style>
+        /* ... все стили ... */
+        html, body { height: 100%; margin: 0; padding: 0; }
+        #map { width: 100%; height: 100%; }
+        #controls {
+            position: absolute; top: 10px; right: 10px; background-color: white;
+            padding: 10px; border-radius: 5px; z-index: 1000; font-family: sans-serif;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+        }
+        .side-panel {
+            position: fixed; top: 0; right: -450px; width: 400px; height: 100%;
+            background-color: white; z-index: 1500; overflow-y: auto;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.2); padding: 20px;
+            box-sizing: border-box; transition: right 0.4s ease-in-out;
+        }
+        .side-panel.is-visible { right: 0; }
+        .panel-image { width: 100%; height: auto; border-radius: 5px; }
+        .close-button {
+            position: absolute; top: 10px; right: 15px; font-size: 28px;
+            font-weight: bold; cursor: pointer; color: #aaa;
+        }
+        .close-button:hover { color: #333; }
+        #imageInfo { font-size: 14px; word-wrap: break-word; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <label><input type="radio" name="layer_select" value="true_color" checked> True Color</label>
+        <label><input type="radio" name="layer_select" value="ndvi"> NDVI</label>
+    <hr> <div>
+        <label for="resolution">Детализация:</label>
+        <input type="range" id="resolution" name="resolution" min="10" max="150" value="60" step="10">
+        <span id="resolutionValue">60</span> м/пикс
+        </div>
+    </div>
+    <div id="map"></div>
+
+    <div id="sidePanel" class="side-panel">
+        <span class="close-button">&times;</span>
+        <h2>Спутниковый снимок</h2>
+        <img id="panelImage" src="" alt="Satellite Image" class="panel-image">
+        <h3>Информация о снимке</h3>
+        <p id="imageInfo"></p>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://unpkg.com/leaflet-geosearch@3.11.0/dist/geosearch.umd.js"></script>
+
+    <script>
+    // --- ИНИЦИАЛИЗАЦИЯ КАРТЫ ---
+    const map = L.map('map').setView([41.01, 28.97], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    // --- ИНИЦИАЛИЗАЦИЯ ПОИСКА ---
+    // Убедимся, что GeoSearch доступен, прежде чем его использовать
+    if (window.GeoSearch) {
+        const search = new GeoSearch.GeoSearchControl({
+            provider: new GeoSearch.OpenStreetMapProvider(),
+            style: 'bar',
+            showMarker: true,
+            marker: { icon: new L.Icon.Default(), draggable: false },
+            autoClose: true,
+            keepResult: true
+        });
+        map.addControl(search);
+    } else {
+        console.error("GeoSearch library not loaded!");
+    }
+
+    // --- ИНИЦИАЛИЗАЦИЯ ИНСТРУМЕНТОВ РИСОВАНИЯ ---
+    const drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+    map.addControl(new L.Control.Draw({
+        edit: false,
+        draw: { rectangle: true, polygon: true, circle: false, marker: false, circlemarker: false, polyline: false }
+    }));
+
+    // --- ЛОГИКА ДЛЯ ЭЛЕМЕНТОВ УПРАВЛЕНИЯ И ПАНЕЛИ ---
+    const resolutionSlider = document.getElementById('resolution');
+    const resolutionValue = document.getElementById('resolutionValue');
+    const sidePanel = document.getElementById('sidePanel');
+    const panelImage = document.getElementById('panelImage');
+    const imageInfo = document.getElementById('imageInfo');
+    const closeButton = document.querySelector('.close-button');
+
+    // Обновляем текст при движении ползунка
+    resolutionSlider.oninput = function() {
+        resolutionValue.innerHTML = this.value;
+    }
+
+    // Закрыть панель по клику на крестик
+    closeButton.onclick = () => {
+        sidePanel.classList.remove('is-visible');
+    }
+
+    // --- ОБРАБОТКА СОБЫТИЯ РИСОВАНИЯ ---
+    map.on(L.Draw.Event.CREATED, function (e) {
+        const layer = e.layer;
+        const bounds = layer.getBounds();
+        drawnItems.clearLayers();
+        drawnItems.addLayer(layer);
+
+        const popup = L.popup().setLatLng(bounds.getCenter()).setContent('🛰️ Запрашиваю снимок...').openOn(map);
+        
+        const bbox = [bounds.getSouthWest().lng, bounds.getSouthWest().lat, bounds.getNorthEast().lng, bounds.getNorthEast().lat];
+        const selectedLayer = document.querySelector('input[name="layer_select"]:checked').value;
+        const resolution = parseInt(resolutionSlider.value, 10);
+
+        fetch('/get-image', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bbox: bbox, layer_type: selectedLayer, resolution: resolution })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`Ошибка сервера: ${response.status}`);
+            return response.json(); 
+        })
+        .then(data => {
+            map.closePopup(popup);
+            
+            const imageUrl = "data:image/png;base64," + data.image_base64;
+            panelImage.src = imageUrl;
+            
+            imageInfo.innerHTML = `
+                <b>Запрошенное разрешение:</b> ${resolution} м/пикс<br>
+                <b>Центр области:</b> ${data.center_lat}, ${data.center_lon}<br>
+                <b>Итоговое разрешение снимка:</b> ${data.width} x ${data.height} пикселей<br>
+                <b>Координаты (Bounding Box):</b><br>${JSON.stringify(data.bbox)}
+            `;
+            
+            sidePanel.classList.add('is-visible');
+        })
+        .catch(error => {
+            popup.setContent(`❌ Ошибка: ${error.message}`);
+        });
+    });
+</script>
+</body>
+</html>
