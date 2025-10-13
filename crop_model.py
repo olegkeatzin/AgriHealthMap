@@ -170,19 +170,25 @@ class CropDetectionModel:
         """
         self.device = torch.device(device if torch.cuda.is_available() and device == 'cuda' else 'cpu')
 
-        # Создаем модель
-        self.model = AttentionUNet(in_channels=10, num_classes=6)
-
         # Загружаем веса если указан путь
         if model_path and Path(model_path).exists():
-            checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
-            if 'model_state_dict' in checkpoint:
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-            else:
-                self.model.load_state_dict(checkpoint)
-            print(f"Model loaded from {model_path}")
+            try:
+                # Пытаемся загрузить как TorchScript модель
+                self.model = torch.jit.load(model_path, map_location=self.device)
+                print(f"TorchScript model loaded from {model_path}")
+            except Exception as e:
+                # Если не TorchScript, загружаем как обычный checkpoint
+                print(f"Not a TorchScript model, loading as checkpoint: {e}")
+                self.model = AttentionUNet(in_channels=10, num_classes=6)
+                checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+                if 'model_state_dict' in checkpoint:
+                    self.model.load_state_dict(checkpoint['model_state_dict'])
+                else:
+                    self.model.load_state_dict(checkpoint)
+                print(f"Model loaded from {model_path}")
         else:
             print("Warning: No model weights loaded. Using random initialization.")
+            self.model = AttentionUNet(in_channels=10, num_classes=6)
 
         self.model.to(self.device)
         self.model.eval()

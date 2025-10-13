@@ -1,0 +1,76 @@
+{
+  "training_config": {
+    "data_root": "/content/agricultural_segmentation",
+    "output_dir": "/content/agricultural_segmentation/models/crop_detection",
+    "tensorboard_dir": "/content/agricultural_segmentation/runs/crop_detection",
+    "num_epochs": 100,
+    "batch_size": 128,
+    "learning_rate": 0.0002,
+    "image_size": [
+      256,
+      256
+    ],
+    "gradient_clip": 1.0,
+    "early_stopping_patience": 15,
+    "use_amp": true,
+    "in_channels": 10,
+    "num_classes": 6,
+    "focal_weight": 0.5,
+    "dice_weight": 0.5,
+    "class_weights": [
+      1.0,
+      2.5,
+      2.0,
+      10.0,
+      8.0,
+      2.5
+    ],
+    "val_split": 0.2,
+    "test_tiles": [
+      "tile_0009"
+    ]
+  },
+  "class_config": {
+    "class_names": [
+      "background",
+      "wheat",
+      "corn",
+      "sunflower",
+      "soybean",
+      "other_crops"
+    ],
+    "class_colors": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        255,
+        215,
+        0
+      ],
+      [
+        255,
+        255,
+        0
+      ],
+      [
+        255,
+        140,
+        0
+      ],
+      [
+        0,
+        255,
+        0
+      ],
+      [
+        144,
+        238,
+        144
+      ]
+    ]
+  },
+  "best_val_iou": 0.3106788901275288
+}

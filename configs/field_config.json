@@ -1,0 +1,26 @@
+{
+  "data_dir": "data/multiband_timeseries",
+  "scl_mask_dir": "data/scl_masks",
+  "osm_mask_dir": "data/osm_masks",
+  "output_dir": "models/segmentation",
+  "image_size": [
+    256,
+    256
+  ],
+  "num_classes": 5,
+  "use_cache": false,
+  "batch_size": 16,
+  "num_epochs": 100,
+  "learning_rate": 0.0002,
+  "weight_decay": 0.0001,
+  "use_attention": true,
+  "in_channels": 10,
+  "use_weighted_loss": true,
+  "dice_weight": 0.5,
+  "focal_weight": 0.5,
+  "use_amp": true,
+  "gradient_clip": 1.0,
+  "early_stopping_patience": 15,
+  "val_split": 0.2,
+  "random_seed": 42
+}

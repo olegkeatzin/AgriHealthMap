@@ -44,54 +44,11 @@ class AttentionBlock(nn.Module):
         return x * psi
 
 
-class AttentionUNet(nn.Module):
-    """U-Net с Attention gates для сегментации полей"""
-
-    def __init__(self, in_channels=10, num_classes=4, use_attention=True):
+class DoubleConv(nn.Module):
+    """Double convolution block"""
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-
-        self.use_attention = use_attention
-
-        # Encoder
-        self.enc1 = self._make_layer(in_channels, 64)
-        self.pool1 = nn.MaxPool2d(2, 2)
-
-        self.enc2 = self._make_layer(64, 128)
-        self.pool2 = nn.MaxPool2d(2, 2)
-
-        self.enc3 = self._make_layer(128, 256)
-        self.pool3 = nn.MaxPool2d(2, 2)
-
-        self.enc4 = self._make_layer(256, 512)
-        self.pool4 = nn.MaxPool2d(2, 2)
-
-        # Bottleneck
-        self.bottleneck = self._make_layer(512, 1024)
-
-        # Decoder with attention
-        self.upconv4 = nn.ConvTranspose2d(1024, 512, 2, stride=2)
-        self.att4 = AttentionBlock(F_g=512, F_l=512, F_int=256) if use_attention else None
-        self.dec4 = self._make_layer(1024, 512)
-
-        self.upconv3 = nn.ConvTranspose2d(512, 256, 2, stride=2)
-        self.att3 = AttentionBlock(F_g=256, F_l=256, F_int=128) if use_attention else None
-        self.dec3 = self._make_layer(512, 256)
-
-        self.upconv2 = nn.ConvTranspose2d(256, 128, 2, stride=2)
-        self.att2 = AttentionBlock(F_g=128, F_l=128, F_int=64) if use_attention else None
-        self.dec2 = self._make_layer(256, 128)
-
-        self.upconv1 = nn.ConvTranspose2d(128, 64, 2, stride=2)
-        self.att1 = AttentionBlock(F_g=64, F_l=64, F_int=32) if use_attention else None
-        self.dec1 = self._make_layer(128, 64)
-
-        # Final classifier
-        self.final = nn.Conv2d(64, num_classes, 1)
-
-        self._initialize_weights()
-
-    def _make_layer(self, in_channels, out_channels):
-        return nn.Sequential(
+        self.double_conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, 3, padding=1, bias=False),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True),
@@ -99,6 +56,63 @@ class AttentionUNet(nn.Module):
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
+
+    def forward(self, x):
+        return self.double_conv(x)
+
+
+class AttentionUNet(nn.Module):
+    """U-Net с Attention gates для сегментации полей"""
+
+    def __init__(self, in_channels=10, num_classes=5, use_attention=True):
+        super().__init__()
+
+        self.use_attention = use_attention
+
+        # Encoder (5 levels)
+        self.enc1 = DoubleConv(in_channels, 64)
+        self.pool1 = nn.MaxPool2d(2, 2)
+
+        self.enc2 = DoubleConv(64, 128)
+        self.pool2 = nn.MaxPool2d(2, 2)
+
+        self.enc3 = DoubleConv(128, 256)
+        self.pool3 = nn.MaxPool2d(2, 2)
+
+        self.enc4 = DoubleConv(256, 512)
+        self.pool4 = nn.MaxPool2d(2, 2)
+
+        self.enc5 = DoubleConv(512, 1024)
+        self.pool5 = nn.MaxPool2d(2, 2)
+
+        # Bottleneck
+        self.bottleneck = DoubleConv(1024, 2048)
+
+        # Decoder with attention
+        self.upconv5 = nn.ConvTranspose2d(2048, 1024, 2, stride=2)
+        self.att5 = AttentionBlock(F_g=1024, F_l=1024, F_int=512) if use_attention else None
+        self.dec5 = DoubleConv(2048, 1024)
+
+        self.upconv4 = nn.ConvTranspose2d(1024, 512, 2, stride=2)
+        self.att4 = AttentionBlock(F_g=512, F_l=512, F_int=256) if use_attention else None
+        self.dec4 = DoubleConv(1024, 512)
+
+        self.upconv3 = nn.ConvTranspose2d(512, 256, 2, stride=2)
+        self.att3 = AttentionBlock(F_g=256, F_l=256, F_int=128) if use_attention else None
+        self.dec3 = DoubleConv(512, 256)
+
+        self.upconv2 = nn.ConvTranspose2d(256, 128, 2, stride=2)
+        self.att2 = AttentionBlock(F_g=128, F_l=128, F_int=64) if use_attention else None
+        self.dec2 = DoubleConv(256, 128)
+
+        self.upconv1 = nn.ConvTranspose2d(128, 64, 2, stride=2)
+        self.att1 = AttentionBlock(F_g=64, F_l=64, F_int=32) if use_attention else None
+        self.dec1 = DoubleConv(128, 64)
+
+        # Final classifier
+        self.out = nn.Conv2d(64, num_classes, 1)
+
+        self._initialize_weights()
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -114,12 +128,19 @@ class AttentionUNet(nn.Module):
         enc2 = self.enc2(self.pool1(enc1))
         enc3 = self.enc3(self.pool2(enc2))
         enc4 = self.enc4(self.pool3(enc3))
+        enc5 = self.enc5(self.pool4(enc4))
 
         # Bottleneck
-        bottleneck = self.bottleneck(self.pool4(enc4))
+        bottleneck = self.bottleneck(self.pool5(enc5))
 
         # Decoder
-        dec4 = self.upconv4(bottleneck)
+        dec5 = self.upconv5(bottleneck)
+        if self.use_attention and self.att5:
+            enc5 = self.att5(dec5, enc5)
+        dec5 = torch.cat([dec5, enc5], dim=1)
+        dec5 = self.dec5(dec5)
+
+        dec4 = self.upconv4(dec5)
         if self.use_attention and self.att4:
             enc4 = self.att4(dec4, enc4)
         dec4 = torch.cat([dec4, enc4], dim=1)
@@ -143,7 +164,7 @@ class AttentionUNet(nn.Module):
         dec1 = torch.cat([dec1, enc1], dim=1)
         dec1 = self.dec1(dec1)
 
-        return self.final(dec1)
+        return self.out(dec1)
 
 
 # === INFERENCE CLASS ===
@@ -151,19 +172,21 @@ class AttentionUNet(nn.Module):
 class FieldSegmentationModel:
     """Wrapper для модели сегментации полей"""
 
-    # Классы сегментации
+    # Классы сегментации (5 классов согласно обученной модели)
     CLASS_NAMES = [
         'background',     # 0 - фон (не поле)
         'field',          # 1 - поле
         'field_boundary', # 2 - граница поля
-        'other'           # 3 - другие объекты
+        'other',          # 3 - другие объекты
+        'undefined'       # 4 - неопределенный класс
     ]
 
     CLASS_COLORS = [
         [0, 0, 0],        # background - черный
         [0, 255, 0],      # field - зеленый
         [255, 255, 0],    # field_boundary - желтый
-        [128, 128, 128]   # other - серый
+        [128, 128, 128],  # other - серый
+        [64, 64, 64]      # undefined - темно-серый
     ]
 
     def __init__(self, model_path: Optional[str] = None, device: str = 'cpu'):
@@ -176,8 +199,8 @@ class FieldSegmentationModel:
         """
         self.device = torch.device(device if torch.cuda.is_available() and device == 'cuda' else 'cpu')
 
-        # Создаем модель
-        self.model = AttentionUNet(in_channels=10, num_classes=4, use_attention=True)
+        # Создаем модель (5 классов согласно обученной модели)
+        self.model = AttentionUNet(in_channels=10, num_classes=5, use_attention=True)
 
         # Загружаем веса если указан путь
         if model_path and Path(model_path).exists():

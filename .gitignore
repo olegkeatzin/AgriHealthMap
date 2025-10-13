@@ -11,3 +11,11 @@ wheels/
 
 # api keys and other secrets
 *.env
+
+# Model weights (too large for GitHub - 1.9 GB total)
+models/*.pt
+models/*.pth
+models/*.ckpt
+
+# Keep models directory but ignore weights
+!models/.gitkeep
