@@ -1,7 +1,7 @@
 [project]
 name = "healthmap"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.2.0"
+description = "Agricultural health monitoring with crop detection ML models"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -12,4 +12,9 @@ dependencies = [
     "matplotlib>=3.10.6",
     "sentinelhub>=3.11.2",
     "shapely>=2.1.2",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "opencv-python>=4.8.0",
+    "numpy>=1.24.0",
+    "python-dotenv>=1.0.0",
 ]
