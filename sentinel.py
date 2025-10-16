@@ -1,4 +1,4 @@
-from sentinelhub import SHConfig, DataCollection, SentinelHubRequest, MimeType, BBox, CRS, bbox_to_dimensions
+from sentinelhub import SHConfig, DataCollection, SentinelHubRequest, MimeType, BBox, CRS, bbox_to_dimensions,SentinelHubCatalog
 # Добавляем импорты для работы с датами
 from datetime import datetime, timedelta
 # Импортируем relativedelta для точной работы с месяцами
@@ -232,26 +232,66 @@ class Sentinel:
         """
         return evalscript.replace("'", '"') # Заменяем одинарные кавычки на двойные для соответствия формату JSON
     
-    def get_data(self, requested_layers:list):
-        data_collection = DataCollection.SENTINEL2_L2A
-        evalscript = self.create_evalscript(requested_layers)
-        responses = [SentinelHubRequest.output_response(layer_id, MimeType.TIFF) for layer_id in requested_layers]
-        request = SentinelHubRequest(
-            evalscript=evalscript,
-            input_data=[
-                SentinelHubRequest.input_data(
-                    data_collection=data_collection,
-                    time_interval=self.time_interval, 
-                    mosaicking_order='leastCC',
+    def get_data(self, requested_layers: list, cloud_threshold: float = 30, max_retries: int = 4):
+        catalog = SentinelHubCatalog(config=self.config)
+
+        end_date = datetime.strptime(self.time_interval[1], "%Y-%m-%d")
+        start_date = datetime.strptime(self.time_interval[0], "%Y-%m-%d")
+
+        for i in range(max_retries):
+            current_interval = (start_date, end_date)
+            print(f"Попытка {i+1}/{max_retries}: Поиск снимков в интервале {start_date.date()} - {end_date.date()}")
+
+            filter_cql = f"eo:cloud_cover < {cloud_threshold}"
+            search_iterator = catalog.search(
+                DataCollection.SENTINEL2_L2A,
+                bbox=self.bbox,
+                time=current_interval,
+                filter=filter_cql,
+                filter_lang="cql2-text",
+            )
+            
+            all_scenes = list(search_iterator)
+
+            if all_scenes:
+                latest_scene = sorted(all_scenes, key=lambda scene: scene["properties"]["datetime"])[-1]
+                
+                datetime_str = latest_scene["properties"]["datetime"]
+                capture_date_dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+                capture_date = capture_date_dt.strftime("%Y-%m-%d")
+                
+                print(f"Найден безоблачный снимок от {capture_date}. Загрузка...")
+
+                specific_time_interval = (
+                    capture_date_dt - timedelta(seconds=1),
+                    capture_date_dt + timedelta(seconds=1),
                 )
-            ],
-            responses=responses,
-            bbox=self.bbox,
-            size=self.bbox_size,
-            config=self.config,
-        )
-        data = request.get_data(decode_data=True)
-        return data[0]
+
+                evalscript = self.create_evalscript(requested_layers)
+                responses = [SentinelHubRequest.output_response(layer_id, MimeType.TIFF) for layer_id in requested_layers]
+                
+                request = SentinelHubRequest(
+                    evalscript=evalscript,
+                    input_data=[
+                        SentinelHubRequest.input_data(
+                            data_collection=DataCollection.SENTINEL2_L2A,
+                            time_interval=specific_time_interval,
+                        )
+                    ],
+                    responses=responses,
+                    bbox=self.bbox,
+                    size=self.bbox_size,
+                    config=self.config,
+                )
+                
+                data = request.get_data(decode_data=True)
+                return data[0], capture_date
+
+            print("Безоблачных снимков не найдено. Сдвигаем интервал на неделю назад.")
+            end_date -= timedelta(days=7)
+            start_date -= timedelta(days=7)
+
+        raise ValueError(f"Не удалось найти безоблачный снимок (облачность < {cloud_threshold}%) за последние {max_retries} недель.")
 
   
 
