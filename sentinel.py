@@ -21,6 +21,21 @@ LAYER_DEFINITIONS = {
         'output': {'id': 'B01', 'bands': 1, 'sampleType': 'FLOAT32'},
         'eval_code': 'let B01 = [sample.B01];'
     },
+    'B02': {
+        'inputs': ['B02'],
+        'output': {'id': 'B02', 'bands': 1, 'sampleType': 'FLOAT32'},
+        'eval_code': 'let B02 = [sample.B02];'
+    },
+    'B03': {
+        'inputs': ['B03'],
+        'output': {'id': 'B03', 'bands': 1, 'sampleType': 'FLOAT32'},
+        'eval_code': 'let B03 = [sample.B03];'
+    },
+    'B04': {
+        'inputs': ['B04'],
+        'output': {'id': 'B04', 'bands': 1, 'sampleType': 'FLOAT32'},
+        'eval_code': 'let B04 = [sample.B04];'
+    },
     'B05': {
         'inputs': ['B05'],
         'output': {'id': 'B05', 'bands': 1, 'sampleType': 'FLOAT32'},
