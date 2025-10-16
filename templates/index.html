@@ -1,54 +1,125 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Карта Sentinel</title>
+    <title>AgriHealthMap</title>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
     <link rel="stylesheet" href="https://unpkg.com/leaflet-geosearch@3.11.0/dist/geosearch.css"/>
+
     <style>
-        /* ... все стили ... */
-        html, body { height: 100%; margin: 0; padding: 0; }
+        html, body { height: 100%; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         #map { width: 100%; height: 100%; }
-        #controls {
-            position: absolute; top: 10px; right: 10px; background-color: white;
-            padding: 10px; border-radius: 5px; z-index: 1000; font-family: sans-serif;
-            box-shadow: 0 0 10px rgba(0,0,0,0.2);
-        }
+        
         .side-panel {
             position: fixed; top: 0; right: -450px; width: 400px; height: 100%;
-            background-color: white; z-index: 1500; overflow-y: auto;
-            box-shadow: -2px 0 8px rgba(0,0,0,0.2); padding: 20px;
-            box-sizing: border-box; transition: right 0.4s ease-in-out;
+            background-color: white; z-index: 1001; /* Выше чем контролы карты */
+            overflow-y: auto;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.2); 
+            padding: 20px; box-sizing: border-box; 
+            transition: right 0.4s ease-in-out;
         }
         .side-panel.is-visible { right: 0; }
-        .panel-image { width: 100%; height: auto; border-radius: 5px; }
+
+        .panel-image { 
+            width: 100%; height: auto; border-radius: 8px; 
+            background-color: #f0f0f0; 
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+        }
+        
         .close-button {
             position: absolute; top: 10px; right: 15px; font-size: 28px;
             font-weight: bold; cursor: pointer; color: #aaa;
         }
         .close-button:hover { color: #333; }
-        #imageInfo { font-size: 14px; word-wrap: break-word; }
+        
+        #imageInfo, #modelInfo { 
+            font-size: 14px; word-wrap: break-word; background-color: #f9f9f9; 
+            padding: 12px; border-radius: 4px; margin-bottom: 15px;
+        }
+
+        .loading-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 1.1em;
+            border-radius: 8px;
+            display: none; /* Скрыт по умолчанию */
+            text-align: center;
+        }
+        .image-container {
+            position: relative;
+            margin-bottom: 15px;
+        }
+        .model-controls button {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 10px;
+            border: 1px solid #007bff;
+            background-color: #007bff;
+            color: white;
+            font-size: 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .model-controls button:hover {
+            background-color: #0056b3;
+        }
+        .model-controls button:disabled {
+            background-color: #cccccc;
+            border-color: #999999;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
-    <div id="controls">
-        <label><input type="radio" name="layer_select" value="true_color" checked> True Color</label>
-        <label><input type="radio" name="layer_select" value="ndvi"> NDVI</label>
-    <hr> <div>
-        <label for="resolution">Детализация:</label>
-        <input type="range" id="resolution" name="resolution" min="10" max="150" value="60" step="10">
-        <span id="resolutionValue">60</span> м/пикс
-        </div>
-    </div>
+    
     <div id="map"></div>
 
     <div id="sidePanel" class="side-panel">
         <span class="close-button">&times;</span>
-        <h2>Спутниковый снимок</h2>
-        <img id="panelImage" src="" alt="Satellite Image" class="panel-image">
-        <h3>Информация о снимке</h3>
-        <p id="imageInfo"></p>
+        <h2>Анализ области</h2>
+        
+        <div id="initialImages">
+            <div class="image-container">
+                <h4>True Color</h4>
+                <img id="trueColorImage" src="" alt="Спутниковый снимок True Color" class="panel-image">
+            </div>
+            <div class="image-container">
+                <h4>NDVI</h4>
+                <img id="ndviImage" src="" alt="Спутниковый снимок NDVI" class="panel-image">
+            </div>
+        </div>
+
+        <h3>Статистика NDVI</h3>
+        <p id="imageInfo">Выделите область на карте для получения данных.</p>
+
+        <hr>
+        
+        <h3>Запустить анализ</h3>
+        <div class="model-controls">
+            <button id="btnDetectCrops">Детекция культур</button>
+            <button id="btnSegmentFields">Сегментация полей</button>
+            <button id="btnPredictNdvi">Прогноз NDVI</button>
+        </div>
+
+        <div id="modelResultContainer" style="margin-top: 20px;">
+            <div class="image-container">
+                 <h3 id="modelResultTitle"></h3>
+                 <img id="modelResultImage" src="" class="panel-image" style="display: none;">
+                 <div id="modelResultInfo"></div>
+                 <div id="loadingOverlay" class="loading-overlay">🤖 Модель анализирует снимок...</div>
+            </div>
+        </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -56,6 +127,9 @@
     <script src="https://unpkg.com/leaflet-geosearch@3.11.0/dist/geosearch.umd.js"></script>
 
     <script>
+    // --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
+    let currentBbox = null; // Для хранения координат выделенной области
+
     // --- ИНИЦИАЛИЗАЦИЯ КАРТЫ ---
     const map = L.map('map').setView([41.01, 28.97], 10);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -63,15 +137,9 @@
     }).addTo(map);
 
     // --- ИНИЦИАЛИЗАЦИЯ ПОИСКА ---
-    // Убедимся, что GeoSearch доступен, прежде чем его использовать
     if (window.GeoSearch) {
         const search = new GeoSearch.GeoSearchControl({
-            provider: new GeoSearch.OpenStreetMapProvider(),
-            style: 'bar',
-            showMarker: true,
-            marker: { icon: new L.Icon.Default(), draggable: false },
-            autoClose: true,
-            keepResult: true
+            provider: new GeoSearch.OpenStreetMapProvider(), style: 'bar',
         });
         map.addControl(search);
     } else {
@@ -83,68 +151,194 @@
     map.addLayer(drawnItems);
     map.addControl(new L.Control.Draw({
         edit: false,
-        draw: { rectangle: true, polygon: true, circle: false, marker: false, circlemarker: false, polyline: false }
+        draw: { rectangle: true, polygon: false, circle: false, marker: false, circlemarker: false, polyline: false }
     }));
 
-    // --- ЛОГИКА ДЛЯ ЭЛЕМЕНТОВ УПРАВЛЕНИЯ И ПАНЕЛИ ---
-    const resolutionSlider = document.getElementById('resolution');
-    const resolutionValue = document.getElementById('resolutionValue');
+    // --- ПОЛУЧЕНИЕ ЭЛЕМЕНТОВ DOM ---
     const sidePanel = document.getElementById('sidePanel');
-    const panelImage = document.getElementById('panelImage');
-    const imageInfo = document.getElementById('imageInfo');
     const closeButton = document.querySelector('.close-button');
+    const trueColorImage = document.getElementById('trueColorImage');
+    const ndviImage = document.getElementById('ndviImage');
+    const imageInfo = document.getElementById('imageInfo');
+    const loadingOverlay = document.getElementById('loadingOverlay');
 
-    // Обновляем текст при движении ползунка
-    resolutionSlider.oninput = function() {
-        resolutionValue.innerHTML = this.value;
+    const btnDetectCrops = document.getElementById('btnDetectCrops');
+    const btnSegmentFields = document.getElementById('btnSegmentFields');
+    const btnPredictNdvi = document.getElementById('btnPredictNdvi');
+
+    const modelResultContainer = document.getElementById('modelResultContainer');
+    const modelResultTitle = document.getElementById('modelResultTitle');
+    const modelResultImage = document.getElementById('modelResultImage');
+    const modelResultInfo = document.getElementById('modelResultInfo');
+
+    // --- ФУНКЦИИ ---
+
+    // Показывает/скрывает оверлей загрузки
+    function showLoading(isLoading, message = "🤖 Модель работает...") {
+        loadingOverlay.textContent = message;
+        loadingOverlay.style.display = isLoading ? 'flex' : 'none';
+        modelResultImage.style.opacity = isLoading ? 0.3 : 1;
     }
 
-    // Закрыть панель по клику на крестик
-    closeButton.onclick = () => {
-        sidePanel.classList.remove('is-visible');
+    // Очищает результаты работы моделей
+    function clearModelResults() {
+        modelResultTitle.textContent = '';
+        modelResultImage.src = '';
+        modelResultImage.style.display = 'none';
+        modelResultInfo.innerHTML = '';
     }
 
-    // --- ОБРАБОТКА СОБЫТИЯ РИСОВАНИЯ ---
-    map.on(L.Draw.Event.CREATED, function (e) {
-        const layer = e.layer;
-        const bounds = layer.getBounds();
-        drawnItems.clearLayers();
-        drawnItems.addLayer(layer);
+    // 1. Запрос базовых снимков (True Color и NDVI)
+    function fetchInitialImages() {
+        if (!currentBbox) return;
 
-        const popup = L.popup().setLatLng(bounds.getCenter()).setContent('🛰️ Запрашиваю снимок...').openOn(map);
+        showLoading(true, "🛰️ Загрузка снимков...");
         
-        const bbox = [bounds.getSouthWest().lng, bounds.getSouthWest().lat, bounds.getNorthEast().lng, bounds.getNorthEast().lat];
-        const selectedLayer = document.querySelector('input[name="layer_select"]:checked').value;
-        const resolution = parseInt(resolutionSlider.value, 10);
+        // Очищаем предыдущие результаты
+        imageInfo.innerHTML = 'Загрузка данных...';
+        trueColorImage.src = '';
+        ndviImage.src = '';
+        clearModelResults();
 
-        fetch('/get-image', {
+        fetch('/calculate-ndvi', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ bbox: bbox, layer_type: selectedLayer, resolution: resolution })
+            body: JSON.stringify({ bbox: currentBbox, resolution: 10 }) // Детализация 60 м/пикс по умолчанию
         })
         .then(response => {
             if (!response.ok) throw new Error(`Ошибка сервера: ${response.status}`);
             return response.json(); 
         })
         .then(data => {
-            map.closePopup(popup);
+            trueColorImage.src = "data:image/jpeg;base64," + data.rgb_image;
+            ndviImage.src = "data:image/jpeg;base64," + data.ndvi_image;
             
-            const imageUrl = "data:image/png;base64," + data.image_base64;
-            panelImage.src = imageUrl;
-            
-            imageInfo.innerHTML = `
-                <b>Запрошенное разрешение:</b> ${resolution} м/пикс<br>
+            const stats = data.statistics;
+            imageInfo.innerHTML =` 
                 <b>Центр области:</b> ${data.center_lat}, ${data.center_lon}<br>
-                <b>Итоговое разрешение снимка:</b> ${data.width} x ${data.height} пикселей<br>
-                <b>Координаты (Bounding Box):</b><br>${JSON.stringify(data.bbox)}
+                <b>Разрешение снимка:</b> ${data.width} x ${data.height} пикс.<br>
+                <b>Средний NDVI:</b> ${stats.mean_ndvi.toFixed(3)}<br>
+                <b>Max/Min NDVI:</b> ${stats.max_ndvi.toFixed(3)} / ${stats.min_ndvi.toFixed(3)}
             `;
-            
-            sidePanel.classList.add('is-visible');
         })
         .catch(error => {
-            popup.setContent(`❌ Ошибка: ${error.message}`);
+            imageInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${error.message}</span>`;
+        })
+        .finally(() => {
+            showLoading(false);
         });
+    }
+
+    // 2. Запрос для детекции культур
+    function detectCrops() {
+        if (!currentBbox) return;
+        showLoading(true, "🤖 Идёт детекция культур...");
+        clearModelResults();
+
+        fetch('/detect-crops', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bbox: currentBbox, resolution: 10 })
+        })
+        .then(response => response.json())
+        .then(data => {
+            modelResultTitle.textContent = "Результат детекции культур";
+            modelResultImage.src = "data:image/jpeg;base64," + data.overlay;
+            modelResultImage.style.display = 'block';
+            
+            let distributionHtml = '<h4>Распределение культур:</h4><ul>';
+            for (const className in data.class_distribution) {
+                const percentage = data.class_distribution[className];
+                distributionHtml += `<li>${className}: ${percentage.toFixed(2)}%</li>`;
+            }
+            distributionHtml += '</ul>';
+            modelResultInfo.innerHTML = distributionHtml;
+        })
+        .catch(err => modelResultInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${err.message}</span>`)
+        .finally(() => showLoading(false));
+    }
+
+    // 3. Запрос для сегментации полей
+    function segmentFields() {
+        if (!currentBbox) return;
+        showLoading(true, "🤖 Сегментация полей...");
+        clearModelResults();
+
+        fetch('/segment-fields', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bbox: currentBbox, resolution: 10 })
+        })
+        .then(response => response.json())
+        .then(data => {
+            modelResultTitle.textContent = "Результат сегментации полей";
+            modelResultImage.src = "data:image/jpeg;base64," + data.overlay;
+            modelResultImage.style.display = 'block';
+            modelResultInfo.innerHTML = `<h4>Найдено полей: ${data.num_fields}</h4>`;
+        })
+        .catch(err => modelResultInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${err.message}</span>`)
+        .finally(() => showLoading(false));
+    }
+
+    function predictNdvi() {
+    if (!currentBbox) return;
+    showLoading(true, "🤖 Строим прогноз NDVI...");
+    clearModelResults();
+
+    fetch('/predict-ndvi', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ bbox: currentBbox, resolution: 10 }) // Используем 10 м/пикс
+    })
+    .then(response => {
+        if (!response.ok) throw new Error(`Ошибка сервера: ${response.status}`);
+        return response.json();
+    })
+    .then(data => {
+        modelResultTitle.textContent = "Результат прогноза NDVI";
+        modelResultImage.src = "data:image/jpeg;base64," + data.predicted_ndvi_image;
+        modelResultImage.style.display = 'block';
+        
+        const stats = data.statistics;
+        modelResultInfo.innerHTML = `
+            <h4>${data.message}</h4>
+            <ul>
+                <li>Среднее предсказанное значение: ${stats.mean_predicted_ndvi.toFixed(3)}</li>
+                <li>Макс. предсказанное значение: ${stats.max_predicted_ndvi.toFixed(3)}</li>
+            </ul>`;
+    })
+    .catch(err => modelResultInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${err.message}</span>`)
+    .finally(() => showLoading(false));
+}
+    
+    // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
+
+    // 1. Область на карте нарисована
+    map.on(L.Draw.Event.CREATED, function (e) {
+        const layer = e.layer;
+        drawnItems.clearLayers();
+        drawnItems.addLayer(layer);
+        
+        const bounds = layer.getBounds();
+        currentBbox = [bounds.getSouthWest().lng, bounds.getSouthWest().lat, bounds.getNorthEast().lng, bounds.getNorthEast().lat];
+        
+        sidePanel.classList.add('is-visible');
+        fetchInitialImages();
     });
+
+    // 2. Закрытие боковой панели
+    closeButton.onclick = () => {
+        sidePanel.classList.remove('is-visible');
+        drawnItems.clearLayers(); 
+        currentBbox = null; 
+    };
+
+    // 3. Нажатие на кнопки моделей
+    btnDetectCrops.addEventListener('click', detectCrops);
+    btnSegmentFields.addEventListener('click', segmentFields);
+    // Для прогноза NDVI, когда эндпоинт будет готов
+    btnPredictNdvi.addEventListener('click', predictNdvi);
+
 </script>
 </body>
 </html>

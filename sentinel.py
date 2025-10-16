@@ -1,4 +1,6 @@
 from sentinelhub import SHConfig, DataCollection, SentinelHubRequest, MimeType, BBox, CRS, bbox_to_dimensions
+from eolearn.core import EOPatch,EONode,OutputTask, FeatureType, EOWorkflow, linearly_connect_tasks
+from eolearn.io import SentinelHubInputTask, SentinelHubEvalscriptTask
 # Добавляем импорты для работы с датами
 from datetime import datetime, timedelta
 # Импортируем relativedelta для точной работы с месяцами
@@ -20,6 +22,21 @@ LAYER_DEFINITIONS = {
         'inputs': ['B01'],
         'output': {'id': 'B01', 'bands': 1, 'sampleType': 'FLOAT32'},
         'eval_code': 'let B01 = [sample.B01];'
+    },
+    'B02': {
+        'inputs': ['B02'],
+        'output': {'id': 'B02', 'bands': 1, 'sampleType': 'FLOAT32'},
+        'eval_code': 'let B02 = [sample.B02];'
+    },
+    'B03': {
+        'inputs': ['B03'],
+        'output': {'id': 'B03', 'bands': 1, 'sampleType': 'FLOAT32'},
+        'eval_code': 'let B03 = [sample.B03];'
+    },
+    'B04': {
+        'inputs': ['B04'],
+        'output': {'id': 'B04', 'bands': 1, 'sampleType': 'FLOAT32'},
+        'eval_code': 'let B04 = [sample.B04];'
     },
     'B05': {
         'inputs': ['B05'],
@@ -237,6 +254,72 @@ class Sentinel:
         )
         data = request.get_data(decode_data=True)
         return data[0]
+    def get_data_for_time_range(self, start_date, end_date, layer='ndvi'):
+        """
+        Запрашивает временной ряд данных с использованием EOWorkflow и SentinelHubEvalscriptTask,
+        следуя официальной документации.
+        """
+        if not self.bbox:
+            raise ValueError("Область интереса (bbox) не установлена.")
+
+        if layer not in LAYER_DEFINITIONS:
+            raise ValueError(f"Слой '{layer}' не определен.")
+
+        layer_def = LAYER_DEFINITIONS[layer]
+        
+        # 1. Формируем простой и однозначный evalscript только для одного слоя (NDVI).
+        # Этот код остается без изменений.
+        evalscript = f"""
+            //VERSION=3
+            function setup() {{
+                return {{
+                    input: {str(layer_def['inputs']).replace("'", '"')},
+                    output: [{{
+                        id: "{layer_def['output']['id']}",
+                        bands: {layer_def['output']['bands']},
+                        sampleType: "{layer_def['output']['sampleType']}"
+                    }}]
+                }};
+            }}
+            function evaluatePixel(sample) {{
+                {layer_def['eval_code']}
+                return {{ "{layer_def['output']['id']}": {layer_def['output']['id']} }};
+            }}
+        """
+
+        # 2. Определяем задачу для выполнения evalscript (`SentinelHubEvalscriptTask`).
+        # Это ПРАВИЛЬНЫЙ класс для данной операции согласно документации.
+        evalscript_task = SentinelHubEvalscriptTask(
+            # Указываем, куда в EOPatch сохранить результат.
+            # Имя признака (layer) должно совпадать с `id` в evalscript.
+            features=[(FeatureType.DATA, layer)],
+            evalscript=evalscript,
+            data_collection=DataCollection.SENTINEL2_L2A,
+            resolution=self.resolution,
+            config=self.config
+        )
+        output_task = OutputTask("eopatch")
+        # 3. Создаем workflow из этой задачи.
+        node = linearly_connect_tasks(evalscript_task,output_task)
+        # Явно указываем, какой узел является выходным.
+        workflow = EOWorkflow(node)
+
+        # 4. Готовим аргументы для выполнения.
+        execution_args = {
+            node[0]: {
+                'bbox': self.bbox,
+                'time_interval': (start_date, end_date)
+            }
+        }
+    
+        # 5. Запускаем workflow.
+        print(f"Запуск eo-learn workflow для периода с {start_date} по {end_date}...")
+        results = workflow.execute(execution_args)
+        print("Workflow выполнен.")
+        eopatch_result = results.outputs["eopatch"]
+        print((eopatch_result.data[layer]).shape)
+        # 7. Возвращаем массив NumPy из EOPatch, который содержит слой с NDVI.
+        return eopatch_result.data[layer]
 
   
 

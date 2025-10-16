@@ -265,8 +265,31 @@ class CropDetectionModel:
         # Препроцессинг
         image_tensor = self.preprocess_sentinel_data(sentinel_bands)
 
-        # Инференс
-        output = self.model(image_tensor)
+        # --- НАЧАЛО ИЗМЕНЕНИЙ ---
+        
+        # 1. Сохраняем оригинальный размер для последующей обрезки
+        _, _, original_h, original_w = image_tensor.shape
+        
+        # 2. Определяем целевой размер (например, кратный 32)
+        target_h = ((original_h - 1) // 32 + 1) * 32
+        target_w = ((original_w - 1) // 32 + 1) * 32
+        
+        # 3. Вычисляем паддинг
+        pad_h = target_h - original_h
+        pad_w = target_w - original_w
+        
+        # Паддинг добавляется справа и снизу
+        # Формат: (pad_left, pad_right, pad_top, pad_bottom)
+        padding = (0, pad_w, 0, pad_h)
+        
+        # 4. Применяем паддинг
+        padded_tensor = F.pad(image_tensor, padding, "constant", 0)
+        
+        # 5. Подаем дополненный тензор в модель
+        output = self.model(padded_tensor)
+        
+        # 6. Обрезаем выходную маску до оригинального размера
+        output = output[:, :, :original_h, :original_w]
 
         # Получаем предсказания
         probabilities = F.softmax(output, dim=1)[0]  # [num_classes, H, W]

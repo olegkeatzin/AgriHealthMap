@@ -21,9 +21,10 @@ load_dotenv()
 # FastAPI будет проверять, что фронтенд присылает именно эти данные
 class BboxRequest(BaseModel):
     bbox: List[float]
-    layer_type: Literal["true_color", "ndvi"]
+    layer_type: Optional[Literal["true_color", "ndvi"]] = None 
     # Добавляем поле resolution с проверкой: значение от 10 до 500
     resolution: int = Field(..., ge=10, le=500)
+
 
 # --- ИНИЦИАЛИЗАЦИЯ FastAPI И ШАБЛОНОВ ---
 app = FastAPI()
@@ -151,17 +152,26 @@ async def detect_crops(request: BboxRequest):
 
         # Формируем словарь с данными каналов
         sentinel_bands = {}
-        for i, band_name in enumerate(required_bands):
-            if band_data.shape[2] > i:
-                sentinel_bands[band_name] = band_data[:, :, i]
+        for key, value in band_data.items():
+            band_name = key.replace('.tif', '') # Удаляем '.tif'
+            sentinel_bands[band_name] = value
 
         # Запускаем модель детекции
         prediction = crop_model.predict(sentinel_bands, return_probabilities=False)
 
         # Получаем RGB для визуализации
-        rgb_bands = ['B04', 'B03', 'B02']  # Red, Green, Blue
+        rgb_bands = ['B04', 'B03', 'B02']
         rgb_data = sentinel.get_data(rgb_bands)
-        rgb_image = (rgb_data * 255).astype(np.uint8)
+
+        # Собираем 3D-массив из словаря каналов, используя np.stack
+        # Указываем порядок [Red, Green, Blue] для правильного отображения
+        rgb_image = np.stack(
+        [rgb_data['B04.tif'], rgb_data['B03.tif'], rgb_data['B02.tif']],
+         axis=2
+        )
+
+        # Теперь преобразуем готовый массив в формат для изображений (0-255, uint8)
+        rgb_image = (rgb_image * 255).astype(np.uint8)
 
         # Создаем overlay visualization
         overlay = visualize_prediction(rgb_image, prediction, alpha=0.4)
@@ -259,11 +269,10 @@ async def segment_fields(request: BboxRequest):
         required_bands = ['B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B11', 'B12']
         band_data = sentinel.get_data(required_bands)
 
-        # Формируем словарь с данными каналов
         sentinel_bands = {}
-        for i, band_name in enumerate(required_bands):
-            if band_data.shape[2] > i:
-                sentinel_bands[band_name] = band_data[:, :, i]
+        for key, value in band_data.items():
+            band_name = key.replace('.tif', '') # Удаляем '.tif'
+            sentinel_bands[band_name] = value
 
         # Запускаем модель сегментации
         prediction = field_model.predict(sentinel_bands, return_probabilities=False)
@@ -271,7 +280,16 @@ async def segment_fields(request: BboxRequest):
         # Получаем RGB для визуализации
         rgb_bands = ['B04', 'B03', 'B02']
         rgb_data = sentinel.get_data(rgb_bands)
-        rgb_image = (rgb_data * 255).astype(np.uint8)
+
+# Собираем 3D-массив из словаря каналов, используя np.stack
+# Указываем порядок [Red, Green, Blue] для правильного отображения
+        rgb_image = np.stack(
+        [rgb_data['B04.tif'], rgb_data['B03.tif'], rgb_data['B02.tif']],
+        axis=2
+        )
+
+# Теперь преобразуем готовый массив в формат для изображений (0-255, uint8)
+        rgb_image = (rgb_image * 255).astype(np.uint8)
 
         # Создаем overlay с границами полей
         overlay = visualize_field_segmentation(rgb_image, prediction, alpha=0.4, draw_boundaries=True)
@@ -340,10 +358,13 @@ async def calculate_ndvi(request: BboxRequest):
         required_bands = ['B02', 'B03', 'B04', 'B08']
         band_data = sentinel.get_data(required_bands)
 
+        # Новый, исправленный код
         sentinel_bands = {}
-        for i, band_name in enumerate(required_bands):
-            if band_data.shape[2] > i:
-                sentinel_bands[band_name] = band_data[:, :, i]
+        for key, value in band_data.items():
+            # Удаляем '.tif' из ключа, чтобы получить чистое имя канала
+            # Например, 'B02.tif' -> 'B02'
+            band_name = key.replace('.tif', '') 
+            sentinel_bands[band_name] = value
 
         # Вычисляем NDVI
         ndvi = ndvi_model.calculate_ndvi_from_bands(sentinel_bands)
@@ -395,6 +416,68 @@ async def calculate_ndvi(request: BboxRequest):
 
     except Exception as e:
         print(f"Ошибка при вычислении NDVI: {e}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+# 7. Прогнозирование NDVI
+@app.post("/predict-ndvi")
+async def predict_ndvi(request: BboxRequest):
+    """
+    Прогнозирует будущее значение NDVI для указанной области.
+    Для этого запрашивается временной ряд снимков.
+    """
+    try:
+        min_lon, min_lat, max_lon, max_lat = request.bbox
+        sentinel.set_aoi(min_lon, min_lat, max_lon, max_lat)
+        sentinel.set_resolution(request.resolution) # Используем разрешение из запроса
+
+        # Для прогноза нам нужен временной ряд данных.
+        # Запросим данные NDVI за последние 180 дней.
+        # ПРИМЕЧАНИЕ: Это предполагает, что ваш класс Sentinel
+        # имеет метод для получения данных за период.
+        # Если его нет, эту логику нужно будет реализовать в sentinel.py
+        from datetime import datetime, timedelta
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=180)
+        
+        # Получаем временную серию NDVI
+        # Этот метод может потребовать доработки в вашем sentinel.py
+        ndvi_timeseries = sentinel.get_data_for_time_range(
+            start_date.strftime('%Y-%m-%d'),
+            end_date.strftime('%Y-%m-%d'),
+            layer='ndvi'
+        )
+
+        # Запускаем модель прогнозирования
+        # Модель должна принять серию снимков и вернуть один прогноз
+        predicted_ndvi = ndvi_model.predict_ndvi_timeseries(ndvi_timeseries)
+
+        # Визуализируем результат
+        predicted_ndvi_colored = visualize_ndvi(predicted_ndvi, colormap='RdYlGn')
+
+        # Конвертируем в base64
+        def array_to_base64(arr):
+            img = Image.fromarray(arr)
+            buffer = io.BytesIO()
+            img.save(buffer, format="JPEG")
+            return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        predicted_ndvi_base64 = array_to_base64(predicted_ndvi_colored)
+
+        # Формируем ответ
+        response_data = {
+            "predicted_ndvi_image": predicted_ndvi_base64,
+            "statistics": {
+                "mean_predicted_ndvi": float(predicted_ndvi.mean()),
+                "max_predicted_ndvi": float(predicted_ndvi.max())
+            },
+            "message": "Прогноз NDVI на следующую доступную дату."
+        }
+
+        return JSONResponse(content=response_data)
+
+    except Exception as e:
+        print(f"Ошибка при прогнозировании NDVI: {e}")
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

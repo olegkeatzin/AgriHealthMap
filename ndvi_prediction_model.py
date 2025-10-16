@@ -19,34 +19,42 @@ import matplotlib.cm as cm
 class LSTMPredictor(nn.Module):
     """LSTM модель для прогнозирования NDVI."""
 
-    def __init__(self, input_size: int = 2, hidden_size: int = 64, num_layers: int = 2,
+    def __init__(self, input_size: int = 2, hidden_size: int = 128, num_layers: int = 2,
                  forecast_horizon: int = 2, dropout: float = 0.2):
         super().__init__()
+         # ✨ ДОБАВЬТЕ ЭТИ ДВЕ СТРОКИ
+        self.num_layers = num_layers
+        self.hidden_size = hidden_size
 
         self.lstm = nn.LSTM(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout=dropout if num_layers > 1 else 0,
-            batch_first=True
+            batch_first=True,
+            bidirectional=True,
         )
 
-        self.fc = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2),
+        self.regressor_head = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, forecast_horizon)
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 2, 1)
         )
 
     def forward(self, x):
-        # x: (batch, seq_len, features)
-        lstm_out, (h_n, c_n) = self.lstm(x)
+        # Инициализируем скрытые состояния с учётом двунаправленности
+        # Размер h0 и c0: (num_layers * 2, batch_size, hidden_size)
+        h0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size).to(x.device)
+        c0 = torch.zeros(self.num_layers * 2, x.size(0), self.hidden_size).to(x.device)
 
-        # Используем последний скрытый слой
-        last_hidden = h_n[-1]  # (batch, hidden_size)
+        # Нам нужен только выход из LSTM
+        out, _ = self.lstm(x, (h0, c0))
 
-        # Прогноз
-        output = self.fc(last_hidden)  # (batch, forecast_horizon)
+        # Подаём выход последнего временного шага в слой регрессии
+        output = self.regressor_head(out[:, -1, :])
         return output
 
 
@@ -117,7 +125,7 @@ class NDVIPredictionModel:
         if model_type == "lstm":
             self.model = LSTMPredictor(
                 input_size=2,
-                hidden_size=64,
+                hidden_size=128,
                 num_layers=2,
                 forecast_horizon=forecast_horizon,
                 dropout=0.2
@@ -192,6 +200,10 @@ class NDVIPredictionModel:
         Returns:
             Словарь с результатами предсказания
         """
+        # ✨ НОВЫЙ КОД: Если массив 4-мерный, убираем последнее измерение
+        if ndvi_sequence.ndim == 4 and ndvi_sequence.shape[-1] == 1:
+            ndvi_sequence = np.squeeze(ndvi_sequence, axis=-1)
+        # Теперь форма массива (52, 94, 104), и ndim == 3
         # Проверяем размерность
         if ndvi_sequence.ndim == 3:
             # Пространственный NDVI - вычисляем статистики
