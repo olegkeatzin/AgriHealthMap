@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AgriHealthMap</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-geosearch@3.11.0/dist/geosearch.css"/>
+
+    <style>
+        /* --- ОБЩИЕ СТИЛИ --- */
+        html, body { 
+            height: 100%; 
+            margin: 0; 
+            padding: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+        }
+        #map { width: 100%; height: 100%; }
+
+        .close-button {
+            position: absolute; top: 10px; right: 15px; font-size: 28px;
+            font-weight: bold; cursor: pointer; color: #aaa;
+        }
+        .close-button:hover { color: #333; }
+
+        /* --- ПРАВАЯ ПАНЕЛЬ АНАЛИЗА --- */
+        .side-panel {
+            position: fixed; top: 0; right: -450px; width: 400px; height: 100%;
+            background-color: white; z-index: 1001;
+            overflow-y: auto;
+            box-shadow: -2px 0 8px rgba(0,0,0,0.2); 
+            padding: 20px; box-sizing: border-box; 
+            transition: right 0.4s ease-in-out;
+        }
+        .side-panel.is-visible { right: 0; }
+        .side-panel h2, .side-panel h3, .side-panel h4 { color: #333; }
+        .side-panel hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+
+        /* --- ЛЕВАЯ ПАНЕЛЬ ИЗБРАННОГО --- */
+        .left-panel {
+            position: fixed; top: 0; left: -350px; width: 320px; height: 100%;
+            background-color: white; z-index: 1001;
+            overflow-y: auto;
+            box-shadow: 2px 0 8px rgba(0,0,0,0.2); 
+            padding: 20px; box-sizing: border-box; 
+            transition: left 0.4s ease-in-out;
+        }
+        .left-panel.is-visible { left: 0; }
+        .left-panel h3 { margin-top: 0; }
+
+        #favorites-toggle {
+            position: fixed;
+            top: 120px;
+            left: 8px;
+            z-index: 1000;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            width: 40px;
+            height: 40px;
+            font-size: 22px;
+            cursor: pointer;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.2);
+            display: none;
+        }
+
+        .panel-image { 
+            width: 100%; height: auto; border-radius: 8px; 
+            background-color: #f0f0f0; 
+            margin-bottom: 10px;
+            border: 1px solid #ddd;
+        }
+        
+        #imageInfo { 
+            font-size: 14px; word-wrap: break-word; background-color: #f9f9f9; 
+            padding: 12px; border-radius: 4px; margin-bottom: 15px;
+        }
+
+        .loading-overlay {
+            position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 1.1em;
+            border-radius: 8px; display: none; text-align: center;
+        }
+        .image-container { position: relative; margin-bottom: 15px; }
+
+        /* --- УПРАВЛЕНИЕ МОДЕЛЯМИ --- */
+        .model-controls button {
+            display: block; width: 100%; padding: 12px; margin-bottom: 10px;
+            border: 1px solid #007bff; background-color: #007bff; color: white;
+            font-size: 16px; border-radius: 5px; cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        .model-controls button:hover { background-color: #0056b3; }
+        .model-controls button:disabled {
+            background-color: #cccccc; border-color: #999999; cursor: not-allowed;
+        }
+        .action-button {
+             display: block; width: 100%; padding: 10px; margin-top: 10px;
+             border: 1px solid #28a745; background-color: #28a745; color: white;
+             font-size: 15px; border-radius: 5px; cursor: pointer;
+        }
+        .action-button:hover { background-color: #218838; }
+        .action-button:disabled { background-color: #cccccc; border-color: #999999; cursor: not-allowed; }
+
+        /* --- ПАНЕЛЬ АВТОРИЗАЦИИ (СПРАВА) --- */
+        #auth-container {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 1002;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            width: 280px;
+        }
+        #auth-container h4 { margin-top: 0; }
+        #auth-container input {
+            width: calc(100% - 20px);
+            padding: 8px 10px;
+            margin-bottom: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        #auth-container .auth-buttons button {
+            width: 48%;
+            padding: 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #auth-container .auth-buttons { display: flex; justify-content: space-between; }
+        #loginBtn { background-color: #007bff; color: white; }
+        #registerBtn { background-color: #6c757d; color: white; }
+        #auth-message { font-size: 12px; color: red; margin-top: 5px; height: 15px; }
+
+        /* --- СТАТУС ПОЛЬЗОВАТЕЛЯ (СЛЕВА) --- */
+        #user-status-panel {
+            position: fixed;
+            top: 10px;
+            left: 60px; /* Рядом с кнопками зума */
+            z-index: 1000;
+            background: white;
+            padding: 8px 15px;
+            border-radius: 5px;
+            box-shadow: 0 1px 5px rgba(0,0,0,0.2);
+            display: none; /* Скрыто по умолчанию */
+            align-items: center;
+        }
+        #user-status-panel .username { font-weight: bold; margin-right: 15px; }
+        #logoutBtn {
+            background-color: #dc3545; color: white; padding: 5px 10px;
+            border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+        }
+
+        /* --- СЕКЦИЯ "ИЗБРАННОЕ" --- */
+        #favorites-list {
+            list-style-type: none;
+            padding: 0;
+            margin-top: 10px;
+        }
+        #favorites-list li {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 5px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-size: 14px;
+        }
+        #favorites-list li:hover { background-color: #f0f0f0; }
+        
+    </style>
+</head>
+<body>
+    
+    <div id="map"></div>
+
+    <!-- Кнопка для открытия панели избранного -->
+    <button id="favorites-toggle">⭐</button>
+
+    <!-- Новая левая панель для списка избранного -->
+    <div id="favoritesPanel" class="left-panel">
+        <span class="close-button" id="closeFavoritesPanel">&times;</span>
+        <h3>Избранное</h3>
+        <ul id="favorites-list"></ul>
+    </div>
+
+    <!-- Панель аутентификации пользователя (справа) -->
+    <div id="auth-container">
+        <h4>Вход или Регистрация</h4>
+        <input type="text" id="username" placeholder="Имя пользователя" required>
+        <input type="password" id="password" placeholder="Пароль" required>
+        <div id="auth-message"></div>
+        <div class="auth-buttons">
+            <button id="loginBtn">Войти</button>
+            <button id="registerBtn">Регистрация</button>
+        </div>
+    </div>
+
+    <!-- Панель статуса пользователя (слева) -->
+    <div id="user-status-panel">
+        <span class="username"></span>
+        <button id="logoutBtn">Выйти</button>
+    </div>
+
+    <!-- Основная правая панель -->
+    <div id="sidePanel" class="side-panel">
+        <span class="close-button" id="closeAnalysisPanel">&times;</span>
+        <h2>Анализ области</h2>
+        
+        <div id="initialImages">
+            <div class="image-container">
+                <h4>True Color</h4>
+                <img id="trueColorImage" src="" alt="Спутниковый снимок True Color" class="panel-image">
+            </div>
+            <div class="image-container">
+                <h4>NDVI</h4>
+                <img id="ndviImage" src="" alt="Спутниковый снимок NDVI" class="panel-image">
+            </div>
+        </div>
+
+        <h3>Статистика NDVI</h3>
+        <p id="imageInfo">Выделите область на карте для получения данных.</p>
+
+        <div id="add-favorite-section" style="display: none;">
+            <hr>
+            <button id="btnAddFavorite" class="action-button" disabled>Добавить текущую область в избранное</button>
+        </div>
+        
+        <hr>
+        
+        <h3>Запустить анализ</h3>
+        <div class="model-controls">
+            <button id="btnDetectCrops">Детекция культур</button>
+            <button id="btnSegmentFields">Сегментация полей</button>
+            <button id="btnPredictNdvi">Прогноз NDVI</button>
+        </div>
+
+        <div id="modelResultContainer" style="margin-top: 20px;">
+            <div class="image-container">
+                 <h3 id="modelResultTitle"></h3>
+                 <img id="modelResultImage" src="" class="panel-image" style="display: none;">
+                 <div id="modelResultInfo"></div>
+                 <div id="loadingOverlay" class="loading-overlay">🤖 Модель анализирует снимок...</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script src="https://unpkg.com/leaflet-geosearch@3.11.0/dist/geosearch.umd.js"></script>
+
+    <script>
+    // --- ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ---
+    let currentBbox = null;
+    let userToken = null;
+    let currentUsername = null;
+    let drawnRectangle = null;
+
+    // --- ИНИЦИАЛИЗАЦИЯ КАРТЫ ---
+    const map = L.map('map').setView([41.01, 28.97], 10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    const search = new GeoSearch.GeoSearchControl({ provider: new GeoSearch.OpenStreetMapProvider(), style: 'bar' });
+    map.addControl(search);
+
+    const drawnItems = new L.FeatureGroup();
+    map.addLayer(drawnItems);
+    map.addControl(new L.Control.Draw({
+        edit: false,
+        draw: { rectangle: true, polygon: false, circle: false, marker: false, circlemarker: false, polyline: false }
+    }));
+
+    // --- ПОЛУЧЕНИЕ ЭЛЕМЕНТОВ DOM ---
+    const sidePanel = document.getElementById('sidePanel');
+    const closeAnalysisPanelBtn = document.getElementById('closeAnalysisPanel');
+    const trueColorImage = document.getElementById('trueColorImage');
+    const ndviImage = document.getElementById('ndviImage');
+    const imageInfo = document.getElementById('imageInfo');
+    const loadingOverlay = document.getElementById('loadingOverlay');
+    const btnDetectCrops = document.getElementById('btnDetectCrops');
+    const btnSegmentFields = document.getElementById('btnSegmentFields');
+    const btnPredictNdvi = document.getElementById('btnPredictNdvi');
+    const modelResultContainer = document.getElementById('modelResultContainer');
+    const modelResultTitle = document.getElementById('modelResultTitle');
+    const modelResultImage = document.getElementById('modelResultImage');
+    const modelResultInfo = document.getElementById('modelResultInfo');
+    
+    // Элементы аутентификации и избранного
+    const authContainer = document.getElementById('auth-container');
+    const userStatusPanel = document.getElementById('user-status-panel');
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
+    const loginBtn = document.getElementById('loginBtn');
+    const registerBtn = document.getElementById('registerBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const authMessage = document.getElementById('auth-message');
+    const addFavoriteSection = document.getElementById('add-favorite-section');
+    const btnAddFavorite = document.getElementById('btnAddFavorite');
+    const favoritesList = document.getElementById('favorites-list');
+    const favoritesPanel = document.getElementById('favoritesPanel');
+    const favoritesToggle = document.getElementById('favorites-toggle');
+    const closeFavoritesPanelBtn = document.getElementById('closeFavoritesPanel');
+
+    // --- ОСНОВНЫЕ ФУНКЦИИ ---
+
+    function showLoading(isLoading, message = "🤖 Модель работает...") {
+        loadingOverlay.textContent = message;
+        loadingOverlay.style.display = isLoading ? 'flex' : 'none';
+        modelResultImage.style.opacity = isLoading ? 0.3 : 1;
+    }
+
+    function clearModelResults() {
+        modelResultTitle.textContent = '';
+        modelResultImage.src = '';
+        modelResultImage.style.display = 'none';
+        modelResultInfo.innerHTML = '';
+    }
+    
+    function updateUiForLoginStatus() {
+        if (userToken) {
+            authContainer.style.display = 'none'; // Скрываем форму входа
+            userStatusPanel.style.display = 'flex'; // Показываем статус пользователя
+            userStatusPanel.querySelector('.username').textContent = `Привет, ${currentUsername}!`;
+            
+            favoritesToggle.style.display = 'block';
+            addFavoriteSection.style.display = 'block';
+            btnAddFavorite.disabled = !currentBbox;
+            
+            fetchFavorites();
+        } else {
+            authContainer.style.display = 'block'; // Показываем форму входа
+            userStatusPanel.style.display = 'none'; // Скрываем статус
+            
+            favoritesToggle.style.display = 'none';
+            addFavoriteSection.style.display = 'none';
+            favoritesPanel.classList.remove('is-visible');
+            favoritesList.innerHTML = '';
+            
+            btnAddFavorite.disabled = true;
+        }
+    }
+
+    // --- ВЫЗОВЫ API ---
+
+    function fetchInitialImages() {
+        if (!currentBbox) return;
+
+        showLoading(true, "🛰️ Загрузка снимков...");
+        imageInfo.innerHTML = 'Загрузка данных...';
+        trueColorImage.src = '';
+        ndviImage.src = '';
+        clearModelResults();
+
+        fetch('/calculate-ndvi', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bbox: currentBbox, resolution: 10 })
+        })
+        .then(response => {
+            if (!response.ok) throw new Error(`Ошибка сервера: ${response.status}`);
+            return response.json(); 
+        })
+        .then(data => {
+            trueColorImage.src = "data:image/jpeg;base64," + data.rgb_image;
+            ndviImage.src = "data:image/jpeg;base64," + data.ndvi_image;
+            
+            const stats = data.statistics;
+            imageInfo.innerHTML =` 
+                <b>Дата съемки:</b> ${data.capture_date || 'N/A'}<br>
+                <b>Центр области:</b> ${data.center_lat}, ${data.center_lon}<br>
+                <b>Разрешение снимка:</b> ${data.width} x ${data.height} пикс.<br>
+                <b>Средний NDVI:</b> ${stats.mean_ndvi.toFixed(3)}<br>
+                <b>Max/Min NDVI:</b> ${stats.max_ndvi.toFixed(3)} / ${stats.min_ndvi.toFixed(3)}
+            `;
+        })
+        .catch(error => {
+            imageInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${error.message}</span>`;
+        })
+        .finally(() => {
+            showLoading(false);
+        });
+    }
+
+    function detectCrops() {
+        if (!currentBbox) return;
+        showLoading(true, "🤖 Идёт детекция культур...");
+        clearModelResults();
+
+        fetch('/detect-crops', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bbox: currentBbox }) // Убрали resolution, т.к. на бэке 10м
+        })
+        .then(response => response.json())
+        .then(data => {
+            modelResultTitle.textContent = "Результат детекции культур";
+            modelResultImage.src = "data:image/jpeg;base64," + data.overlay;
+            modelResultImage.style.display = 'block';
+            
+            let distributionHtml = '<h4>Распределение культур:</h4><ul>';
+            for (const className in data.class_distribution) {
+                const percentage = data.class_distribution[className];
+                if (percentage > 0) {
+                   distributionHtml += `<li>${className}: ${percentage.toFixed(2)}%</li>`;
+                }
+            }
+            distributionHtml += '</ul>';
+            modelResultInfo.innerHTML = distributionHtml;
+        })
+        .catch(err => modelResultInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${err.message}</span>`)
+        .finally(() => showLoading(false));
+    }
+
+    function segmentFields() {
+        if (!currentBbox) return;
+        showLoading(true, "🤖 Сегментация полей...");
+        clearModelResults();
+
+        fetch('/segment-fields', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bbox: currentBbox }) // Убрали resolution
+        })
+        .then(response => response.json())
+        .then(data => {
+            modelResultTitle.textContent = "Результат сегментации полей";
+            modelResultImage.src = "data:image/jpeg;base64," + data.overlay;
+            modelResultImage.style.display = 'block';
+            modelResultInfo.innerHTML = `<h4>Найдено полей: ${data.num_fields}</h4>`;
+        })
+        .catch(err => modelResultInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${err.message}</span>`)
+        .finally(() => showLoading(false));
+    }
+
+    function predictNdvi() {
+        if (!currentBbox) return;
+        showLoading(true, "🤖 Строим прогноз NDVI...");
+        clearModelResults();
+        
+        setTimeout(() => {
+            modelResultTitle.textContent = "Прогноз NDVI";
+            modelResultInfo.innerHTML = `
+                <h4>Функция в разработке</h4>
+                <p>Этот эндпоинт ожидает табличные данные (погода, почва), а не гео-область. Требуется доработка интерфейса для ввода этих данных.</p>
+            `;
+            showLoading(false);
+        }, 1500);
+    }
+
+    // --- ЛОГИКА АВТОРИЗАЦИИ И ИЗБРАННОГО ---
+    
+    function setAuthMessage(message, isError = true) {
+        authMessage.textContent = message;
+        authMessage.style.color = isError ? 'red' : 'green';
+    }
+
+    async function handleLogin() {
+        const username = usernameInput.value;
+        const password = passwordInput.value;
+        if (!username || !password) {
+            setAuthMessage("Введите имя и пароль.");
+            return;
+        }
+
+        const formData = new URLSearchParams();
+        formData.append('username', username);
+        formData.append('password', password);
+        
+        try {
+            const response = await fetch('/token', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: formData
+            });
+
+            if (response.status === 401) {
+                throw new Error("Неверное имя пользователя или пароль.");
+            }
+            if (!response.ok) {
+                throw new Error(`Ошибка сервера: ${response.status}`);
+            }
+            const data = await response.json();
+            userToken = data.access_token;
+            currentUsername = username;
+            localStorage.setItem('userToken', userToken);
+            localStorage.setItem('username', currentUsername);
+            setAuthMessage("", false);
+            updateUiForLoginStatus();
+        } catch (error) {
+            setAuthMessage(error.message);
+        }
+    }
+
+    async function handleRegister() {
+        const username = usernameInput.value;
+        const password = passwordInput.value;
+        if (!username || !password) {
+            setAuthMessage("Введите имя и пароль.");
+            return;
+        }
+
+        const formData = new URLSearchParams();
+        formData.append('username', username);
+        formData.append('password', password);
+
+        try {
+            const response = await fetch('/register', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: formData
+            });
+            if (response.status === 400) {
+                 throw new Error("Пользователь уже существует.");
+            }
+             if (!response.ok) {
+                throw new Error(`Ошибка сервера: ${response.status}`);
+            }
+            const data = await response.json();
+            setAuthMessage("Регистрация успешна! Теперь войдите.", false);
+        } catch (error) {
+            setAuthMessage(error.message);
+        }
+    }
+
+    function handleLogout() {
+        userToken = null;
+        currentUsername = null;
+        localStorage.removeItem('userToken');
+        localStorage.removeItem('username');
+        updateUiForLoginStatus();
+    }
+    
+    async function fetchFavorites() {
+        if (!userToken) return;
+        
+        try {
+            const response = await fetch('/favorites', {
+                headers: { 'Authorization': `Bearer ${userToken}` }
+            });
+            if (!response.ok) throw new Error("Не удалось загрузить избранное.");
+            
+            const favorites = await response.json();
+            favoritesList.innerHTML = '';
+            if (favorites.length === 0) {
+                 favoritesList.innerHTML = '<li>У вас пока нет избранных полей.</li>';
+            } else {
+                favorites.forEach(fav => {
+                    const li = document.createElement('li');
+                    li.textContent = fav.name;
+                    li.dataset.bbox = JSON.stringify(fav.bbox);
+                    li.addEventListener('click', () => {
+                        const bbox = JSON.parse(li.dataset.bbox);
+                        const bounds = [[bbox[1], bbox[0]], [bbox[3], bbox[2]]];
+                        
+                        currentBbox = bbox;
+                        map.fitBounds(bounds);
+                        
+                        drawnItems.clearLayers();
+                        drawnRectangle = L.rectangle(bounds, { color: "#ff7800", weight: 1 }).addTo(drawnItems);
+                        sidePanel.classList.add('is-visible');
+                        btnAddFavorite.disabled = false;
+                        
+                        fetchInitialImages();
+                        favoritesPanel.classList.remove('is-visible');
+                    });
+                    favoritesList.appendChild(li);
+                });
+            }
+        } catch (error) {
+            favoritesList.innerHTML = `<li><span style="color:red">${error.message}</span></li>`;
+        }
+    }
+
+    async function addFavorite() {
+        if (!currentBbox || !userToken) return;
+
+        const name = prompt("Введите название для этой области:", "Мое поле");
+        if (!name) return;
+
+        try {
+            const response = await fetch('/favorites', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                body: JSON.stringify({ name, bbox: currentBbox })
+            });
+            if (!response.ok) throw new Error("Не удалось сохранить.");
+            
+            fetchFavorites();
+        } catch (error) {
+            alert(`Ошибка: ${error.message}`);
+        }
+    }
+
+    // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
+
+    map.on(L.Draw.Event.CREATED, function (e) {
+        drawnRectangle = e.layer;
+        drawnItems.clearLayers();
+        drawnItems.addLayer(drawnRectangle);
+        
+        const bounds = drawnRectangle.getBounds();
+        currentBbox = [bounds.getSouthWest().lng, bounds.getSouthWest().lat, bounds.getNorthEast().lng, bounds.getNorthEast().lat];
+        
+        sidePanel.classList.add('is-visible');
+        if (userToken) {
+            btnAddFavorite.disabled = false;
+        }
+        fetchInitialImages();
+    });
+
+    closeAnalysisPanelBtn.onclick = () => {
+        sidePanel.classList.remove('is-visible');
+        drawnItems.clearLayers(); 
+        currentBbox = null; 
+        if (userToken) {
+            btnAddFavorite.disabled = true;
+        }
+    };
+
+    // Управление панелью избранного
+    favoritesToggle.onclick = () => {
+        favoritesPanel.classList.add('is-visible');
+    };
+    closeFavoritesPanelBtn.onclick = () => {
+        favoritesPanel.classList.remove('is-visible');
+    };
+
+    // Кнопки моделей
+    btnDetectCrops.addEventListener('click', detectCrops);
+    btnSegmentFields.addEventListener('click', segmentFields);
+    btnPredictNdvi.addEventListener('click', predictNdvi);
+
+    // Кнопки аутентификации
+    loginBtn.addEventListener('click', handleLogin);
+    registerBtn.addEventListener('click', handleRegister);
+    logoutBtn.addEventListener('click', handleLogout);
+    btnAddFavorite.addEventListener('click', addFavorite);
+    
+    // Проверка сохраненного токена при загрузке страницы
+    document.addEventListener('DOMContentLoaded', () => {
+        const savedToken = localStorage.getItem('userToken');
+        const savedUsername = localStorage.getItem('username');
+        if (savedToken && savedUsername) {
+            userToken = savedToken;
+            currentUsername = savedUsername;
+        }
+        updateUiForLoginStatus();
+    });
+
+    </script>
+</body>
+</html>
+

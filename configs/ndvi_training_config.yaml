@@ -1,0 +1,148 @@
+# NDVI Model Training Configuration
+# Используйте этот файл для удобной настройки гиперпараметров
+
+# === PATHS ===
+paths:
+  data_dir: "data/ndvi_timeseries"
+  output_dir: "outputs/ndvi_training"
+  checkpoint_dir: "checkpoints/ndvi"
+
+# === MODEL ARCHITECTURE ===
+model:
+  in_channels: 10        # Sentinel-2 bands
+  hidden_dim: 256        # LSTM hidden state size (128, 256, 512)
+  num_layers: 3          # Number of LSTM layers (2, 3, 4)
+
+# === TRAINING HYPERPARAMETERS ===
+training:
+  batch_size: 8          # Reduce if OOM (4, 8, 16, 32)
+  num_epochs: 100        # Training epochs (50, 100, 150, 200)
+  learning_rate: 0.0001  # Initial learning rate (1e-3, 1e-4, 1e-5)
+  weight_decay: 0.00001  # L2 regularization (1e-4, 1e-5, 1e-6)
+
+# === DATA ===
+data:
+  image_size: [256, 256] # Image resolution [H, W]
+  time_steps: 5          # Number of historical time steps
+  train_split: 0.8       # Training data fraction
+  val_split: 0.1         # Validation data fraction
+  test_split: 0.1        # Test data fraction
+
+# === OPTIMIZATION ===
+optimization:
+  use_mixed_precision: true  # Use AMP for faster training (GPU only)
+  gradient_clip_val: 1.0     # Gradient clipping max norm
+
+# === LEARNING RATE SCHEDULER ===
+scheduler:
+  type: "cosine"         # Options: "cosine", "step", "plateau"
+  warmup_epochs: 5       # Number of warmup epochs
+  # For cosine scheduler
+  T_0: 10                # Restart period
+  T_mult: 2              # Period multiplication after restart
+  eta_min: 0.000001      # Minimum learning rate
+  # For step scheduler
+  step_size: 20          # Step size for StepLR
+  gamma: 0.5             # LR decay factor
+  # For plateau scheduler
+  patience_scheduler: 5  # Patience for ReduceLROnPlateau
+  factor: 0.5            # LR reduction factor
+
+# === EARLY STOPPING ===
+early_stopping:
+  patience: 15           # Epochs without improvement before stopping
+  min_delta: 0.0001      # Minimum change to qualify as improvement
+
+# === DATA AUGMENTATION ===
+augmentation:
+  use_augmentation: true # Enable/disable augmentation
+  augmentation_prob: 0.5 # Probability of applying augmentation
+  horizontal_flip: true  # Horizontal flip
+  vertical_flip: true    # Vertical flip
+  rotation: true         # 90/180/270 degree rotation
+  gaussian_noise: true   # Gaussian noise
+  noise_std: 0.01        # Noise standard deviation
+
+# === LOSS FUNCTION ===
+loss:
+  mse_weight: 0.5        # MSE loss weight
+  mae_weight: 0.3        # MAE loss weight
+  perceptual_weight: 0.2 # Gradient similarity loss weight
+
+# === LOGGING ===
+logging:
+  log_interval: 10       # Log every N batches
+  save_interval: 5       # Save checkpoint every N epochs
+
+# === COMPUTE ===
+compute:
+  device: "cuda"         # "cuda" or "cpu"
+  num_workers: 4         # DataLoader workers
+  seed: 42               # Random seed for reproducibility
+
+# === EXPERIMENT TRACKING ===
+tracking:
+  experiment_name: "ndvi_prediction_v1"
+  use_tensorboard: false  # Enable TensorBoard logging
+  use_wandb: false        # Enable Weights & Biases logging
+  wandb_project: "agrihealthmap"
+  wandb_entity: null      # Your W&B username/team
+
+# === PRESETS ===
+# Uncomment one preset to quickly configure for different scenarios
+
+# # PRESET: Fast experimentation (low quality, fast training)
+# preset: "fast"
+# training:
+#   batch_size: 16
+#   num_epochs: 30
+# model:
+#   hidden_dim: 128
+#   num_layers: 2
+# data:
+#   image_size: [128, 128]
+
+# # PRESET: Balanced (good quality, reasonable time)
+# preset: "balanced"
+# training:
+#   batch_size: 8
+#   num_epochs: 100
+# model:
+#   hidden_dim: 256
+#   num_layers: 3
+# data:
+#   image_size: [256, 256]
+
+# # PRESET: High quality (best results, slow training)
+# preset: "high_quality"
+# training:
+#   batch_size: 4
+#   num_epochs: 200
+#   learning_rate: 0.00005
+# model:
+#   hidden_dim: 512
+#   num_layers: 4
+# data:
+#   image_size: [512, 512]
+# early_stopping:
+#   patience: 25
+
+# # PRESET: Limited GPU memory
+# preset: "low_memory"
+# training:
+#   batch_size: 2
+# model:
+#   hidden_dim: 128
+#   num_layers: 2
+# data:
+#   image_size: [128, 128]
+# optimization:
+#   use_mixed_precision: true
+
+# === NOTES ===
+# - Use mixed precision (AMP) for 2-3x speedup on GPU
+# - Increase hidden_dim and num_layers for better quality (but slower)
+# - Reduce batch_size and image_size if running out of memory
+# - Use cosine scheduler for smooth convergence
+# - Enable augmentation to improve generalization
+# - Monitor validation loss for overfitting
