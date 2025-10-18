@@ -74,7 +74,7 @@ sentinel.set_date('latest')
 
 CROP_MODEL_PATH = os.getenv("CROP_MODEL_PATH")
 FIELD_MODEL_PATH = os.getenv("FIELD_MODEL_PATH")
-NDVI_CONVLSTM_MODEL_PATH = os.getenv("NDVI_CONVLSTM_MODEL_PATH", "models/ndvi_convlstm_best.pth")
+NDVI_CONVLSTM_MODEL_PATH = os.getenv("NDVI_MODEL_PATH")
 
 crop_model = CropDetectionModel(model_path=CROP_MODEL_PATH, device='cpu')
 field_model = FieldSegmentationModel(model_path=FIELD_MODEL_PATH, device='cpu')
