@@ -302,30 +302,78 @@ async def calculate_ndvi(request: BboxRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/auto-generate-dates")
-async def auto_generate_dates(count: int = 5, interval_days: int = 30, start_month: int = 4):
+async def auto_generate_dates(count: int = 5, interval_days: int = 30):
     """
     Автоматическая генерация списка дат для ConvLSTM модели.
 
+    Генерирует даты ОТ ТЕКУЩЕЙ ДАТЫ назад (исторические данные)
+    и дату предсказания на следующий месяц вперед.
+
+    ОГРАНИЧЕНИЕ: Прогнозы доступны только в сельскохозяйственный сезон (апрель-октябрь).
+    Зимой и поздней осенью прогнозы не имеют смысла.
+
     Args:
-        count: Количество дат (по умолчанию 5)
+        count: Количество входных дат (по умолчанию 5)
         interval_days: Интервал между датами в днях (по умолчанию 30)
-        start_month: Начальный месяц (по умолчанию 4 = апрель)
 
     Returns:
-        Список дат в формате YYYY-MM-DD
+        Список входных дат (до сегодня включительно) + дата предсказания (следующий месяц)
+
+    Raises:
+        HTTPException: Если текущий месяц вне сезона (ноябрь-март)
     """
     from datetime import datetime, timedelta
 
-    # Генерируем даты начиная с указанного месяца текущего года
-    current_year = datetime.now().year
-    start_date = datetime(current_year, start_month, 1)  # 1-е число указанного месяца
+    # Текущая дата - это ПОСЛЕДНЯЯ входная дата
+    today = datetime.now()
+    current_month = today.month
 
-    dates = []
-    for i in range(count):
-        date = start_date + timedelta(days=i * interval_days)
-        dates.append(date.strftime('%Y-%m-%d'))
+    # Проверка: прогнозы доступны только с апреля (4) по октябрь (10)
+    if current_month < 4 or current_month > 10:
+        # Определяем следующий доступный месяц
+        if current_month < 4:
+            next_available = f"апрель {today.year}"
+        else:  # current_month > 10
+            next_available = f"апрель {today.year + 1}"
 
-    return {"dates": dates, "count": len(dates)}
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Прогноз недоступен вне сельскохозяйственного сезона",
+                "message": f"Прогнозы NDVI доступны только с апреля по октябрь. Сейчас {today.strftime('%B %Y')}.",
+                "current_month": current_month,
+                "allowed_months": "апрель (4) - октябрь (10)",
+                "next_available_date": next_available,
+                "reason": "В зимний период и поздней осенью растительность находится в состоянии покоя, прогнозы NDVI не информативны."
+            }
+        )
+
+    # Генерируем входные даты от прошлого к настоящему
+    # count=5: сегодня - 120 дней, сегодня - 90, сегодня - 60, сегодня - 30, сегодня
+    input_dates = []
+    for i in range(count - 1, -1, -1):  # От 4 до 0 (в обратном порядке)
+        date = today - timedelta(days=i * interval_days)
+        input_dates.append(date.strftime('%Y-%m-%d'))
+
+    # Дата предсказания = сегодня + interval_days (следующий месяц)
+    predicted_date = today + timedelta(days=interval_days)
+    predicted_month = predicted_date.month
+
+    # Предупреждение если предсказание выходит за пределы сезона
+    warning = None
+    if predicted_month > 10:
+        warning = f"Прогноз на {predicted_date.strftime('%B %Y')} может быть менее точным - это поздняя осень/зима."
+
+    return {
+        "input_dates": input_dates,
+        "predicted_date": predicted_date.strftime('%Y-%m-%d'),
+        "count": len(input_dates),
+        "interval_days": interval_days,
+        "today": today.strftime('%Y-%m-%d'),
+        "current_month": current_month,
+        "season": "active" if 4 <= current_month <= 9 else "late_season",
+        "warning": warning
+    }
 
 @app.post("/predict-ndvi-convlstm")
 async def predict_ndvi_convlstm(request: NDVIConvLSTMRequest):
@@ -436,6 +484,11 @@ async def predict_ndvi_convlstm(request: NDVIConvLSTMRequest):
         degradation_area = np.sum(difference_map < -0.05) / difference_map.size * 100
         stable_area = 100 - improvement_area - degradation_area
 
+        # Вычисляем дату предсказания (следующий месяц после последней входной даты)
+        from datetime import datetime, timedelta
+        last_input_date = datetime.strptime(request.dates[-1], '%Y-%m-%d')
+        predicted_date = last_input_date + timedelta(days=30)  # Следующий месяц
+
         return JSONResponse(content={
             "predicted_ndvi": array_to_base64(predicted_colored),
             "current_ndvi": array_to_base64(current_colored),
@@ -448,11 +501,16 @@ async def predict_ndvi_convlstm(request: NDVIConvLSTMRequest):
                 "stable_percent": round(stable_area, 2)
             },
             "timeline": {
-                "dates": capture_dates,
+                "input_dates": capture_dates,
                 "ndvi_values": [float(np.nanmean(ndvi)) for ndvi in ndvi_sequence],
+                "predicted_date": predicted_date.strftime('%Y-%m-%d'),
                 "predicted_value": prediction['statistics']['mean_ndvi']
             },
-            "input_dates": capture_dates,
+            "prediction_info": {
+                "predicted_for_date": predicted_date.strftime('%Y-%m-%d'),
+                "last_input_date": request.dates[-1],
+                "forecast_horizon_days": 30
+            },
             "bbox": request.bbox,
             "center_lat": round(sentinel_bbox.middle[1], 5),
             "center_lon": round(sentinel_bbox.middle[0], 5),

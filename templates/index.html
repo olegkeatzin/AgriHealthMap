@@ -496,11 +496,43 @@
         clearModelResults();
 
         try {
-            // Шаг 1: Получаем автоматически сгенерированные даты (с апреля)
-            const datesResponse = await fetch('/auto-generate-dates?count=5&interval_days=30&start_month=4');
-            if (!datesResponse.ok) throw new Error(`Ошибка генерации дат: ${datesResponse.status}`);
+            // Шаг 1: Получаем автоматически сгенерированные даты (от текущей даты)
+            const datesResponse = await fetch('/auto-generate-dates?count=5&interval_days=30');
+
+            // Проверка: доступен ли прогноз в текущем сезоне
+            if (!datesResponse.ok) {
+                if (datesResponse.status === 400) {
+                    const errorData = await datesResponse.json();
+                    const detail = errorData.detail;
+
+                    modelResultTitle.textContent = "⚠️ Прогноз недоступен";
+                    modelResultInfo.innerHTML = `
+                        <div style="background-color: #fff3cd; padding: 15px; border-radius: 4px; border-left: 4px solid #ffc107;">
+                            <h4 style="margin-top: 0; color: #856404;">🌾 Прогноз доступен только в сезон</h4>
+                            <p style="margin: 10px 0;"><b>${detail.message}</b></p>
+                            <p style="margin: 10px 0;">📅 <b>Разрешенный период:</b> ${detail.allowed_months}</p>
+                            <p style="margin: 10px 0;">🔄 <b>Следующий доступный период:</b> ${detail.next_available_date}</p>
+                            <hr style="margin: 15px 0; border: none; border-top: 1px solid #ddd;">
+                            <p style="margin: 10px 0; font-size: 14px; color: #666;">
+                                <b>Причина:</b> ${detail.reason}
+                            </p>
+                            <p style="margin: 10px 0; font-size: 14px; color: #666;">
+                                В зимний период растительность находится в состоянии покоя,
+                                спутниковые данные менее информативны, а прогнозы NDVI не имеют практического применения.
+                            </p>
+                        </div>
+                    `;
+                    showLoading(false);
+                    return;
+                }
+                throw new Error(`Ошибка генерации дат: ${datesResponse.status}`);
+            }
+
             const datesData = await datesResponse.json();
-            const dates = datesData.dates;
+            const dates = datesData.input_dates;  // Входные даты для модели (до сегодня)
+            const predictedDate = datesData.predicted_date;  // Дата предсказания (следующий месяц)
+            const today = datesData.today;  // Текущая дата
+            const warning = datesData.warning;  // Предупреждение (если есть)
 
             showLoading(true, `🛰️ Загрузка ${dates.length} спутниковых снимков...`);
 
@@ -527,13 +559,33 @@
 
             // Создаем HTML с тремя изображениями и статистикой
             let resultsHtml = `
+                <div style="background-color: #e8f5e9; padding: 12px; border-radius: 4px; margin-bottom: 15px; border-left: 4px solid #4caf50;">
+                    <h4 style="margin: 0 0 5px 0; color: #2e7d32;">🔮 Прогноз на следующий месяц</h4>
+                    <p style="margin: 0; font-size: 14px;"><b>Текущая дата:</b> ${data.prediction_info.last_input_date}</p>
+                    <p style="margin: 0; font-size: 14px;"><b>Предсказание на:</b> ${data.prediction_info.predicted_for_date}</p>
+                    <p style="margin: 0; font-size: 12px; color: #666;">Горизонт: ${data.prediction_info.forecast_horizon_days} дней вперед</p>
+                </div>`;
+
+            // Добавляем предупреждение, если есть (октябрь → ноябрь)
+            if (warning) {
+                resultsHtml += `
+                    <div style="background-color: #fff3cd; padding: 12px; border-radius: 4px; margin-bottom: 15px; border-left: 4px solid #ffc107;">
+                        <p style="margin: 0; font-size: 13px; color: #856404;">
+                            ⚠️ <b>Предупреждение:</b> ${warning}
+                        </p>
+                    </div>
+                `;
+            }
+
+            resultsHtml += `
+
                 <div style="margin-bottom: 15px;">
-                    <h4 style="margin-bottom: 5px;">📈 Предсказанный NDVI</h4>
+                    <h4 style="margin-bottom: 5px;">📈 Предсказанный NDVI на ${data.prediction_info.predicted_for_date}</h4>
                     <img src="data:image/jpeg;base64,${data.predicted_ndvi}" class="panel-image">
                 </div>
 
                 <div style="margin-bottom: 15px;">
-                    <h4 style="margin-bottom: 5px;">📊 Текущий NDVI (последний снимок)</h4>
+                    <h4 style="margin-bottom: 5px;">📊 Текущий NDVI (сегодня, ${data.prediction_info.last_input_date})</h4>
                     <img src="data:image/jpeg;base64,${data.current_ndvi}" class="panel-image">
                 </div>
 
@@ -557,18 +609,24 @@
                 </div>
 
                 <div style="background-color: #fff9e6; padding: 12px; border-radius: 4px;">
-                    <h4 style="margin-top: 0;">Временная шкала</h4>
-                    <p style="font-size: 12px;"><b>Входные даты:</b></p>
+                    <h4 style="margin-top: 0;">Временная шкала NDVI</h4>
+                    <p style="font-size: 12px; margin-bottom: 8px;"><b>Входные данные (исторические):</b></p>
             `;
 
-            // Добавляем временную шкалу
-            data.timeline.dates.forEach((date, idx) => {
+            // Добавляем временную шкалу входных дат
+            data.timeline.input_dates.forEach((date, idx) => {
                 const ndviValue = data.timeline.ndvi_values[idx];
-                resultsHtml += `<p style="font-size: 12px; margin: 3px 0;">📅 ${date}: NDVI = ${ndviValue.toFixed(3)}</p>`;
+                const isToday = idx === data.timeline.input_dates.length - 1;
+                const dateLabel = isToday ? `${date} (сегодня)` : date;
+                resultsHtml += `<p style="font-size: 12px; margin: 3px 0;">📅 ${dateLabel}: NDVI = ${ndviValue.toFixed(3)}</p>`;
             });
 
             resultsHtml += `
-                <p style="font-size: 12px; margin-top: 10px;"><b>🔮 Предсказание:</b> NDVI = ${data.timeline.predicted_value.toFixed(3)}</p>
+                <hr style="margin: 10px 0; border: none; border-top: 1px dashed #ccc;">
+                <p style="font-size: 12px; margin-bottom: 5px;"><b>Предсказание на следующий месяц:</b></p>
+                <p style="font-size: 13px; margin: 3px 0; color: #2e7d32; font-weight: bold;">
+                    🔮 ${data.timeline.predicted_date}: NDVI = ${data.timeline.predicted_value.toFixed(3)}
+                </p>
                 </div>
             `;
 
