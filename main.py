@@ -3,16 +3,13 @@ import os
 import io
 import base64
 import traceback
-import pickle
 from typing import List, Literal, Optional, Annotated
 from pathlib import Path
 import asyncio
 
 # --- БИБЛИОТЕКИ ДЛЯ РАБОТЫ С ДАННЫМИ И МОДЕЛЯМИ ---
 import numpy as np
-import pandas as pd
 import torch
-import matplotlib.cm as cm
 from PIL import Image
 from dotenv import load_dotenv
 
@@ -26,8 +23,8 @@ from pydantic import BaseModel, Field
 from sentinel import Sentinel
 from crop_model import CropDetectionModel, visualize_prediction
 from field_segmentation_model import FieldSegmentationModel, visualize_field_segmentation
-from ndvi_prediction_model import NDVIPredictionModel, visualize_ndvi
-from tabular_model import TabularNDVIPredictor
+from ndvi_utils import calculate_ndvi_from_bands, classify_vegetation_health, visualize_ndvi
+from ndvi_convlstm_model import NDVIConvLSTMPredictor, visualize_ndvi_prediction
 from database import db_manager, FavoriteFieldCreate
 from authentification import router as auth_router, get_current_user, User
 from stats import get_all_statistics
@@ -45,17 +42,11 @@ class BboxRequest(BaseModel):
     layer_type: Literal["true_color", "ndvi"] = "true_color"
     resolution: int = Field(10, ge=10, le=500)
 
-class SingleDayFeatures(BaseModel):
-    """Модель для признаков за один временной шаг (один день) для табличной модели."""
-    temperature: float
-    precipitation: float
-    soil_moisture: float
-    region: str
-    soil_texture: str
-
-class NDVIPredictionRequest(BaseModel):
-    """Модель для запроса на предсказание NDVI по табличным данным."""
-    sequence: List[SingleDayFeatures] = Field(..., min_items=5, max_items=5)
+class NDVIConvLSTMRequest(BaseModel):
+    """Модель для запроса на предсказание NDVI через ConvLSTM модель."""
+    bbox: List[float] = Field(..., description="[min_lon, min_lat, max_lon, max_lat]")
+    dates: List[str] = Field(..., min_items=5, max_items=5, description="5 дат в формате YYYY-MM-DD")
+    resolution: int = Field(10, ge=10, le=100)
 
 class FavoriteFieldResponse(FavoriteFieldCreate):
     id: str
@@ -83,69 +74,15 @@ sentinel.set_date('latest')
 
 CROP_MODEL_PATH = os.getenv("CROP_MODEL_PATH")
 FIELD_MODEL_PATH = os.getenv("FIELD_MODEL_PATH")
-NDVI_MODEL_PATH = os.getenv("NDVI_MODEL_PATH")
-TABULAR_NDVI_ARTIFACTS_DIR = os.getenv("TABULAR_NDVI_ARTIFACTS_DIR")
+NDVI_CONVLSTM_MODEL_PATH = os.getenv("NDVI_CONVLSTM_MODEL_PATH", "models/ndvi_convlstm_best.pth")
 
 crop_model = CropDetectionModel(model_path=CROP_MODEL_PATH, device='cpu')
 field_model = FieldSegmentationModel(model_path=FIELD_MODEL_PATH, device='cpu')
-ndvi_model = NDVIPredictionModel(model_path=NDVI_MODEL_PATH, device='cpu')
+ndvi_convlstm_model = NDVIConvLSTMPredictor(model_path=NDVI_CONVLSTM_MODEL_PATH, device='cpu')
 
 print(f"✓ Crop detection model initialized (weights: {CROP_MODEL_PATH or 'random init'})")
 print(f"✓ Field segmentation model initialized (weights: {FIELD_MODEL_PATH or 'random init'})")
-print(f"✓ NDVI calculation model initialized (weights: {NDVI_MODEL_PATH or 'random init'})")
-
-class TabularNDVIPredictorWrapper:
-    def __init__(self, artifacts_dir: str):
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        artifacts_path = Path(artifacts_dir)
-        
-        self.model_path = artifacts_path / "best_model.pth"
-        self.scaler_path = artifacts_path / "scaler.pkl"
-        self.features_path = artifacts_path / "model_features.pkl"
-
-        if not all([self.model_path.exists(), self.scaler_path.exists(), self.features_path.exists()]):
-            raise FileNotFoundError("Один или несколько артефактов для табличной модели NDVI не найдены.")
-
-        with open(self.features_path, 'rb') as f:
-            self.feature_cols = pickle.load(f)
-        with open(self.scaler_path, 'rb') as f:
-            self.scaler = pickle.load(f)
-        
-        numerical_cols_df = pd.DataFrame(columns=self.feature_cols)
-        self.numerical_cols = [col for col in numerical_cols_df.columns if not col.startswith('region_') and not col.startswith('soil_') and pd.api.types.is_numeric_dtype(numerical_cols_df[col])]
-
-
-        self.model = TabularNDVIPredictor(input_features=len(self.feature_cols))
-        self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
-        self.model.to(self.device)
-        self.model.eval()
-        self.weights_loaded = True
-        print(f"✓ Tabular NDVI prediction model initialized (weights: {self.model_path})")
-
-    def prepare_data(self, sequence_data: list) -> torch.Tensor:
-        df = pd.DataFrame(sequence_data)
-        df = pd.get_dummies(df, columns=['region', 'soil_texture'], prefix=['region', 'soil'], drop_first=True)
-        df = df.reindex(columns=self.feature_cols, fill_value=0)
-        
-        cols_to_scale = [col for col in self.numerical_cols if col in df.columns]
-        if cols_to_scale:
-            df[cols_to_scale] = self.scaler.transform(df[cols_to_scale])
-        
-        data_np = df[self.feature_cols].values.astype(np.float32)
-        return torch.from_numpy(data_np).unsqueeze(0).to(self.device)
-
-    @torch.no_grad()
-    def predict(self, sequence_data: list) -> float:
-        input_tensor = self.prepare_data(sequence_data)
-        prediction = self.model(input_tensor)
-        return prediction.cpu().item()
-
-tabular_ndvi_model = None
-try:
-    if TABULAR_NDVI_ARTIFACTS_DIR:
-        tabular_ndvi_model = TabularNDVIPredictorWrapper(artifacts_dir=TABULAR_NDVI_ARTIFACTS_DIR)
-except Exception as e:
-    print(f"✗ Failed to initialize Tabular NDVI model: {e}")
+print(f"✓ NDVI ConvLSTM prediction model initialized (weights: {NDVI_CONVLSTM_MODEL_PATH})")
 
 # ==============================================================================
 # 4. API ЭНДПОИНТЫ
@@ -166,8 +103,7 @@ async def model_info():
     return JSONResponse(content={
         "crop_detection": {"model_name": "Attention U-Net (Crop Detection)", "weights_loaded": CROP_MODEL_PATH is not None},
         "field_segmentation": {"model_name": "Attention U-Net (Field Segmentation)", "weights_loaded": FIELD_MODEL_PATH is not None},
-        "ndvi_calculation": {"model_name": "NDVI Calculator", "weights_loaded": True},
-        "tabular_ndvi_prediction": {"model_name": "Tabular Transformer NDVI Predictor", "weights_loaded": tabular_ndvi_model.weights_loaded if tabular_ndvi_model else False}
+        "ndvi_convlstm_prediction": {"model_name": "ConvLSTM NDVI Predictor", "weights_loaded": True}
     })
 
 @app.post("/get-image")
@@ -326,11 +262,11 @@ async def calculate_ndvi(request: BboxRequest):
 
         sentinel_bands = {}
         for key, value in band_data.items():
-            band_name = key.replace('.tif', '') 
+            band_name = key.replace('.tif', '')
             sentinel_bands[band_name] = value
 
-        ndvi = ndvi_model.calculate_ndvi_from_bands(sentinel_bands)
-        health_classification = ndvi_model._classify_vegetation_health(ndvi)
+        ndvi = calculate_ndvi_from_bands(sentinel_bands)
+        health_classification = classify_vegetation_health(ndvi)
         ndvi_colored = visualize_ndvi(ndvi, colormap='RdYlGn')
 
         rgb_image = np.stack([
@@ -355,6 +291,168 @@ async def calculate_ndvi(request: BboxRequest):
             # --- ДОБАВЛЯЕМ НОВЫЙ КЛЮЧ В ОТВЕТ ---
             "environmental_data": environmental_data, 
             "capture_date": capture_date,
+            "bbox": request.bbox,
+            "center_lat": round(sentinel_bbox.middle[1], 5),
+            "center_lon": round(sentinel_bbox.middle[0], 5),
+            "width": size[0],
+            "height": size[1]
+        })
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/auto-generate-dates")
+async def auto_generate_dates(count: int = 5, interval_days: int = 30, start_month: int = 4):
+    """
+    Автоматическая генерация списка дат для ConvLSTM модели.
+
+    Args:
+        count: Количество дат (по умолчанию 5)
+        interval_days: Интервал между датами в днях (по умолчанию 30)
+        start_month: Начальный месяц (по умолчанию 4 = апрель)
+
+    Returns:
+        Список дат в формате YYYY-MM-DD
+    """
+    from datetime import datetime, timedelta
+
+    # Генерируем даты начиная с указанного месяца текущего года
+    current_year = datetime.now().year
+    start_date = datetime(current_year, start_month, 1)  # 1-е число указанного месяца
+
+    dates = []
+    for i in range(count):
+        date = start_date + timedelta(days=i * interval_days)
+        dates.append(date.strftime('%Y-%m-%d'))
+
+    return {"dates": dates, "count": len(dates)}
+
+@app.post("/predict-ndvi-convlstm")
+async def predict_ndvi_convlstm(request: NDVIConvLSTMRequest):
+    """
+    Предсказание будущей карты NDVI через ConvLSTM модель.
+
+    Использует временную последовательность из 5 спутниковых снимков
+    для предсказания будущего состояния растительности.
+    """
+    try:
+        min_lon, min_lat, max_lon, max_lat = request.bbox
+        sentinel_bbox = sentinel.set_aoi(min_lon, min_lat, max_lon, max_lat)
+        sentinel.set_resolution(request.resolution)
+
+        size = sentinel.bbox_size
+        if max(size) > 2500:
+            ratio = max(size) / 2500
+            size = (int(size[0] / ratio), int(size[1] / ratio))
+
+        # Собираем данные для всех временных шагов
+        required_bands = ['B02', 'B03', 'B04', 'B08']
+        ndvi_sequence = []
+        weather_sequence = []
+        capture_dates = []
+
+        # Получаем данные для каждой даты
+        for date_str in request.dates:
+            sentinel.set_date(date_str)
+
+            # Получаем спутниковые данные и статистику параллельно
+            sentinel_task = asyncio.to_thread(sentinel.get_data, required_bands)
+            stats_task = get_all_statistics(request.bbox)
+
+            (band_data, capture_date), environmental_data = await asyncio.gather(
+                sentinel_task,
+                stats_task
+            )
+
+            # Преобразуем bands в dict
+            sentinel_bands = {key.replace('.tif', ''): value for key, value in band_data.items()}
+
+            # Вычисляем NDVI для этого временного шага
+            ndvi_map = calculate_ndvi_from_bands(sentinel_bands)
+            ndvi_sequence.append(ndvi_map)
+
+            # Извлекаем погодные признаки (15 признаков)
+            weather_features = [
+                environmental_data.get('temperature', 0),
+                environmental_data.get('precipitation', 0),
+                environmental_data.get('humidity', 0),
+                environmental_data.get('wind_speed', 0),
+                environmental_data.get('pressure', 0),
+                environmental_data.get('cloud_cover', 0),
+                environmental_data.get('solar_radiation', 0),
+                environmental_data.get('evapotranspiration', 0),
+                environmental_data.get('dew_point', 0),
+                environmental_data.get('frost_days', 0),
+                environmental_data.get('growing_degree_days', 0),
+                environmental_data.get('heat_stress_index', 0),
+                environmental_data.get('drought_index', 0),
+                environmental_data.get('rainfall_anomaly', 0),
+                environmental_data.get('temperature_anomaly', 0)
+            ]
+            weather_sequence.append(weather_features)
+            capture_dates.append(capture_date)
+
+        # Топографические признаки (10 признаков) - статичные для всей области
+        # Получаем их из последнего environmental_data
+        topo_features = np.array([
+            environmental_data.get('elevation_mean', 0),
+            environmental_data.get('elevation_std', 0),
+            environmental_data.get('slope_mean', 0),
+            environmental_data.get('slope_std', 0),
+            environmental_data.get('slope_max', 0),
+            environmental_data.get('aspect_mean', 0),
+            environmental_data.get('roughness_mean', 0),
+            environmental_data.get('roughness_std', 0),
+            environmental_data.get('twi_mean', 0),
+            environmental_data.get('twi_std', 0)
+        ])
+
+        # Преобразуем в numpy arrays
+        ndvi_sequence = np.array(ndvi_sequence)  # (5, H, W)
+        weather_sequence = np.array(weather_sequence)  # (5, 15)
+
+        # Предсказание через ConvLSTM
+        prediction = ndvi_convlstm_model.predict(
+            ndvi_sequence=ndvi_sequence,
+            weather_sequence=weather_sequence,
+            topo_features=topo_features,
+            return_numpy=True
+        )
+
+        # Визуализация
+        predicted_ndvi_map = prediction['predicted_ndvi_map']
+        current_ndvi = ndvi_sequence[-1]  # Последний NDVI из входной последовательности
+
+        # Создаем цветные визуализации
+        predicted_colored = visualize_ndvi(predicted_ndvi_map, colormap='RdYlGn')
+        current_colored = visualize_ndvi(current_ndvi, colormap='RdYlGn')
+
+        # Карта изменений
+        difference_map = predicted_ndvi_map - current_ndvi
+        difference_colored = visualize_ndvi(difference_map, colormap='RdBu', vmin=-0.3, vmax=0.3)
+
+        # Анализ изменений
+        improvement_area = np.sum(difference_map > 0.05) / difference_map.size * 100
+        degradation_area = np.sum(difference_map < -0.05) / difference_map.size * 100
+        stable_area = 100 - improvement_area - degradation_area
+
+        return JSONResponse(content={
+            "predicted_ndvi": array_to_base64(predicted_colored),
+            "current_ndvi": array_to_base64(current_colored),
+            "difference_map": array_to_base64(difference_colored),
+            "health_classification": prediction['health_classification'],
+            "statistics": prediction['statistics'],
+            "change_analysis": {
+                "improvement_percent": round(improvement_area, 2),
+                "degradation_percent": round(degradation_area, 2),
+                "stable_percent": round(stable_area, 2)
+            },
+            "timeline": {
+                "dates": capture_dates,
+                "ndvi_values": [float(np.nanmean(ndvi)) for ndvi in ndvi_sequence],
+                "predicted_value": prediction['statistics']['mean_ndvi']
+            },
+            "input_dates": capture_dates,
             "bbox": request.bbox,
             "center_lat": round(sentinel_bbox.middle[1], 5),
             "center_lon": round(sentinel_bbox.middle[0], 5),

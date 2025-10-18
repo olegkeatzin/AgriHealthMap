@@ -490,19 +490,97 @@
         .finally(() => showLoading(false));
     }
 
-    function predictNdvi() {
+    async function predictNdvi() {
         if (!currentBbox) return;
-        showLoading(true, "🤖 Строим прогноз NDVI...");
+        showLoading(true, "🤖 Генерация дат для прогноза...");
         clearModelResults();
-        
-        setTimeout(() => {
-            modelResultTitle.textContent = "Прогноз NDVI";
-            modelResultInfo.innerHTML = `
-                <h4>Функция в разработке</h4>
-                <p>Этот эндпоинт ожидает табличные данные (погода, почва), а не гео-область. Требуется доработка интерфейса для ввода этих данных.</p>
+
+        try {
+            // Шаг 1: Получаем автоматически сгенерированные даты (с апреля)
+            const datesResponse = await fetch('/auto-generate-dates?count=5&interval_days=30&start_month=4');
+            if (!datesResponse.ok) throw new Error(`Ошибка генерации дат: ${datesResponse.status}`);
+            const datesData = await datesResponse.json();
+            const dates = datesData.dates;
+
+            showLoading(true, `🛰️ Загрузка ${dates.length} спутниковых снимков...`);
+
+            // Шаг 2: Запрос предсказания NDVI
+            const predictionResponse = await fetch('/predict-ndvi-convlstm', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    bbox: currentBbox,
+                    dates: dates,
+                    resolution: 10
+                })
+            });
+
+            if (!predictionResponse.ok) {
+                const errorText = await predictionResponse.text();
+                throw new Error(`Ошибка предсказания: ${predictionResponse.status} - ${errorText}`);
+            }
+
+            const data = await predictionResponse.json();
+
+            // Шаг 3: Отображаем результаты
+            modelResultTitle.textContent = "Прогноз NDVI (ConvLSTM)";
+
+            // Создаем HTML с тремя изображениями и статистикой
+            let resultsHtml = `
+                <div style="margin-bottom: 15px;">
+                    <h4 style="margin-bottom: 5px;">📈 Предсказанный NDVI</h4>
+                    <img src="data:image/jpeg;base64,${data.predicted_ndvi}" class="panel-image">
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <h4 style="margin-bottom: 5px;">📊 Текущий NDVI (последний снимок)</h4>
+                    <img src="data:image/jpeg;base64,${data.current_ndvi}" class="panel-image">
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <h4 style="margin-bottom: 5px;">🔄 Карта изменений</h4>
+                    <img src="data:image/jpeg;base64,${data.difference_map}" class="panel-image">
+                    <p style="font-size: 12px; color: #666;">Красный = ухудшение, Синий = улучшение</p>
+                </div>
+
+                <div style="background-color: #f9f9f9; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+                    <h4 style="margin-top: 0;">Статистика прогноза</h4>
+                    <p><b>Средний NDVI:</b> ${data.statistics.mean_ndvi.toFixed(3)}</p>
+                    <p><b>Min/Max:</b> ${data.statistics.min_ndvi.toFixed(3)} / ${data.statistics.max_ndvi.toFixed(3)}</p>
+                </div>
+
+                <div style="background-color: #e7f3ff; padding: 12px; border-radius: 4px; margin-bottom: 15px;">
+                    <h4 style="margin-top: 0;">Анализ изменений</h4>
+                    <p>🟢 <b>Улучшение:</b> ${data.change_analysis.improvement_percent}%</p>
+                    <p>🔴 <b>Ухудшение:</b> ${data.change_analysis.degradation_percent}%</p>
+                    <p>⚪ <b>Стабильно:</b> ${data.change_analysis.stable_percent}%</p>
+                </div>
+
+                <div style="background-color: #fff9e6; padding: 12px; border-radius: 4px;">
+                    <h4 style="margin-top: 0;">Временная шкала</h4>
+                    <p style="font-size: 12px;"><b>Входные даты:</b></p>
             `;
+
+            // Добавляем временную шкалу
+            data.timeline.dates.forEach((date, idx) => {
+                const ndviValue = data.timeline.ndvi_values[idx];
+                resultsHtml += `<p style="font-size: 12px; margin: 3px 0;">📅 ${date}: NDVI = ${ndviValue.toFixed(3)}</p>`;
+            });
+
+            resultsHtml += `
+                <p style="font-size: 12px; margin-top: 10px;"><b>🔮 Предсказание:</b> NDVI = ${data.timeline.predicted_value.toFixed(3)}</p>
+                </div>
+            `;
+
+            modelResultInfo.innerHTML = resultsHtml;
+            modelResultImage.style.display = 'none'; // Скрываем основное изображение, т.к. используем встроенные
+
+        } catch (error) {
+            modelResultTitle.textContent = "Ошибка прогноза NDVI";
+            modelResultInfo.innerHTML = `<span style="color: red;">❌ ${error.message}</span>`;
+        } finally {
             showLoading(false);
-        }, 1500);
+        }
     }
 
     // --- ЛОГИКА АВТОРИЗАЦИИ И ИЗБРАННОГО ---
