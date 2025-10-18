@@ -19,3 +19,6 @@ models/*.ckpt
 
 # Keep models directory but ignore weights
 !models/.gitkeep
+
+# Database files
+*.db
