@@ -6,6 +6,7 @@ import traceback
 import pickle
 from typing import List, Literal, Optional, Annotated
 from pathlib import Path
+import asyncio
 
 # --- БИБЛИОТЕКИ ДЛЯ РАБОТЫ С ДАННЫМИ И МОДЕЛЯМИ ---
 import numpy as np
@@ -29,6 +30,7 @@ from ndvi_prediction_model import NDVIPredictionModel, visualize_ndvi
 from tabular_model import TabularNDVIPredictor
 from database import db_manager, FavoriteFieldCreate
 from authentification import router as auth_router, get_current_user, User
+from stats import get_all_statistics
 
 # --- ЗАГРУЗКА ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ---
 load_dotenv()
@@ -309,8 +311,18 @@ async def calculate_ndvi(request: BboxRequest):
             ratio = max(size) / 2500
             size = (int(size[0] / ratio), int(size[1] / ratio))
 
+        # --- ИЗМЕНЕНИЕ НАЧИНАЕТСЯ ЗДЕСЬ ---
+        # Запрашиваем данные Sentinel и внешние статистические данные параллельно
         required_bands = ['B02', 'B03', 'B04', 'B08']
-        band_data, capture_date = sentinel.get_data(required_bands)
+        
+        sentinel_task = asyncio.to_thread(sentinel.get_data, required_bands)
+        stats_task = get_all_statistics(request.bbox)
+        
+        (band_data, capture_date), environmental_data = await asyncio.gather(
+            sentinel_task, 
+            stats_task
+        )
+        # --- ИЗМЕНЕНИЕ ЗАКАНЧИВАЕТСЯ ЗДЕСЬ ---
 
         sentinel_bands = {}
         for key, value in band_data.items():
@@ -340,28 +352,15 @@ async def calculate_ndvi(request: BboxRequest):
                 "min_ndvi": float(np.nanmin(ndvi)),
                 "max_ndvi": float(np.nanmax(ndvi))
             },
+            # --- ДОБАВЛЯЕМ НОВЫЙ КЛЮЧ В ОТВЕТ ---
+            "environmental_data": environmental_data, 
             "capture_date": capture_date,
             "bbox": request.bbox,
-            # ИСПРАВЛЕНИЕ: Добавляем недостающие поля
             "center_lat": round(sentinel_bbox.middle[1], 5),
             "center_lon": round(sentinel_bbox.middle[0], 5),
             "width": size[0],
             "height": size[1]
         })
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/predict-tabular-ndvi")
-async def predict_tabular_ndvi(request: NDVIPredictionRequest):
-    if not tabular_ndvi_model:
-        raise HTTPException(status_code=501, detail="Табличная модель предсказания NDVI не инициализирована.")
-    
-    try:
-        sequence_dicts = [item.model_dump() for item in request.sequence]
-        predicted_ndvi = tabular_ndvi_model.predict(sequence_dicts)
-        
-        return JSONResponse(content={"predicted_ndvi": round(predicted_ndvi, 4)})
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

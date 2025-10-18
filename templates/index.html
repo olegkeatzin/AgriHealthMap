@@ -37,6 +37,8 @@
         .side-panel.is-visible { right: 0; }
         .side-panel h2, .side-panel h3, .side-panel h4 { color: #333; }
         .side-panel hr { border: none; border-top: 1px solid #eee; margin: 20px 0; }
+        #environmental-stats p { margin: 5px 0; font-size: 14px; }
+        #environmental-stats h4 { margin-bottom: 8px; }
 
         /* --- ЛЕВАЯ ПАНЕЛЬ ИЗБРАННОГО --- */
         .left-panel {
@@ -226,6 +228,9 @@
 
         <h3>Статистика NDVI</h3>
         <p id="imageInfo">Выделите область на карте для получения данных.</p>
+        
+        <!-- НОВЫЙ БЛОК ДЛЯ СТАТИСТИКИ ОКРУЖАЮЩЕЙ СРЕДЫ -->
+        <div id="environmental-stats" style="margin-top: 15px;"></div>
 
         <div id="add-favorite-section" style="display: none;">
             <hr>
@@ -284,6 +289,7 @@
     const trueColorImage = document.getElementById('trueColorImage');
     const ndviImage = document.getElementById('ndviImage');
     const imageInfo = document.getElementById('imageInfo');
+    const envStatsContainer = document.getElementById('environmental-stats'); // <-- ИЗМЕНЕНИЕ
     const loadingOverlay = document.getElementById('loadingOverlay');
     const btnDetectCrops = document.getElementById('btnDetectCrops');
     const btnSegmentFields = document.getElementById('btnSegmentFields');
@@ -353,8 +359,9 @@
     function fetchInitialImages() {
         if (!currentBbox) return;
 
-        showLoading(true, "🛰️ Загрузка снимков...");
+        showLoading(true, "🛰️ Загрузка снимков и данных...");
         imageInfo.innerHTML = 'Загрузка данных...';
+        envStatsContainer.innerHTML = ''; // <-- ИЗМЕНЕНИЕ
         trueColorImage.src = '';
         ndviImage.src = '';
         clearModelResults();
@@ -380,9 +387,38 @@
                 <b>Средний NDVI:</b> ${stats.mean_ndvi.toFixed(3)}<br>
                 <b>Max/Min NDVI:</b> ${stats.max_ndvi.toFixed(3)} / ${stats.min_ndvi.toFixed(3)}
             `;
+            
+            // --- НОВЫЙ КОД ДЛЯ ОТОБРАЖЕНИЯ СТАТИСТИКИ ---
+            if (data.environmental_data) {
+                let envHtml = '<h4>Параметры среды</h4>';
+                const { weather, soil, elevation } = data.environmental_data;
+
+                if (weather && !weather.error) {
+                    envHtml += `<p><b>Погода:</b> ${weather.temperature}°C, ветер ${weather.windspeed} км/ч</p>`;
+                } else {
+                    envHtml += `<p><b>Погода:</b> данные недоступны</p>`;
+                }
+                
+                if (soil && !soil.error) {
+                    envHtml += `<p><b>Тип почвы:</b> ${soil.type}</p>`;
+                } else {
+                    envHtml += `<p><b>Тип почвы:</b> данные недоступны</p>`;
+                }
+
+                if (elevation && !elevation.error) {
+                    envHtml += `<p><b>Высота рельефа:</b> ${elevation.elevation} м</p>`;
+                } else {
+                     envHtml += `<p><b>Высота рельефа:</b> данные недоступны</p>`;
+                }
+                
+                envStatsContainer.innerHTML = envHtml;
+            }
+            // --- КОНЕЦ НОВОГО КОДА ---
+
         })
         .catch(error => {
             imageInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${error.message}</span>`;
+            envStatsContainer.innerHTML = ''; // <-- ИЗМЕНЕНИЕ
         })
         .finally(() => {
             showLoading(false);
@@ -661,4 +697,3 @@
     </script>
 </body>
 </html>
-
