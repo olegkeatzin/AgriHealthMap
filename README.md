@@ -51,6 +51,7 @@ AgriHealthMap/
 ├── improvements/           # Улучшения моделей
 ├── models/                 # Сохраненные модели
 ├── templates/              # Шаблоны
+├── tests/                  # Тесты
 ├── train_models/           # Скрипты для обучения моделей
 ├── .gitignore
 ├── .python-version         # Версия Python
@@ -68,11 +69,7 @@ AgriHealthMap/
 ├── server_test.log         # Логи сервера
 ├── stats.py                # Скрипт для статистического анализа
 ├── tabular_model.py        # Модель для работы с табличными данными
-├── test.ipynb              # Jupyter Notebook для тестов
-├── test_convlstm.py        # Тесты для модели ConvLSTM
-├── test_db.py              # Тесты для базы данных
-├── test_integration.py     # Интеграционные тесты
-├── test_models.py          # Тесты для моделей
 ├── uv.lock                 # Файл блокировки зависимостей
 └── verify_improved_model.py # Скрипт для проверки улучшенной модели
 ```
+
