@@ -173,8 +173,26 @@
             cursor: pointer;
             transition: background-color 0.2s;
             font-size: 14px;
+            /* <!-- ИЗМЕНЕНИЕ: Используем Flexbox для расположения кнопки --> */
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         #favorites-list li:hover { background-color: #f0f0f0; }
+
+        /* <!-- ИЗМЕНЕНИЕ: Стили для кнопки удаления --> */
+        .delete-favorite {
+            color: #aaa;
+            font-weight: bold;
+            font-size: 20px;
+            padding: 0 8px;
+            border-radius: 50%;
+            transition: all 0.2s;
+        }
+        .delete-favorite:hover {
+            color: #dc3545; /* Красный цвет при наведении */
+            background-color: #f1f1f1;
+        }
         
     </style>
 </head>
@@ -229,7 +247,6 @@
         <h3>Статистика NDVI</h3>
         <p id="imageInfo">Выделите область на карте для получения данных.</p>
         
-        <!-- НОВЫЙ БЛОК ДЛЯ СТАТИСТИКИ ОКРУЖАЮЩЕЙ СРЕДЫ -->
         <div id="environmental-stats" style="margin-top: 15px;"></div>
 
         <div id="add-favorite-section" style="display: none;">
@@ -289,7 +306,7 @@
     const trueColorImage = document.getElementById('trueColorImage');
     const ndviImage = document.getElementById('ndviImage');
     const imageInfo = document.getElementById('imageInfo');
-    const envStatsContainer = document.getElementById('environmental-stats'); // <-- ИЗМЕНЕНИЕ
+    const envStatsContainer = document.getElementById('environmental-stats'); 
     const loadingOverlay = document.getElementById('loadingOverlay');
     const btnDetectCrops = document.getElementById('btnDetectCrops');
     const btnSegmentFields = document.getElementById('btnSegmentFields');
@@ -332,8 +349,8 @@
     
     function updateUiForLoginStatus() {
         if (userToken) {
-            authContainer.style.display = 'none'; // Скрываем форму входа
-            userStatusPanel.style.display = 'flex'; // Показываем статус пользователя
+            authContainer.style.display = 'none';
+            userStatusPanel.style.display = 'flex'; 
             userStatusPanel.querySelector('.username').textContent = `Привет, ${currentUsername}!`;
             
             favoritesToggle.style.display = 'block';
@@ -342,8 +359,8 @@
             
             fetchFavorites();
         } else {
-            authContainer.style.display = 'block'; // Показываем форму входа
-            userStatusPanel.style.display = 'none'; // Скрываем статус
+            authContainer.style.display = 'block';
+            userStatusPanel.style.display = 'none';
             
             favoritesToggle.style.display = 'none';
             addFavoriteSection.style.display = 'none';
@@ -361,7 +378,7 @@
 
         showLoading(true, "🛰️ Загрузка снимков и данных...");
         imageInfo.innerHTML = 'Загрузка данных...';
-        envStatsContainer.innerHTML = ''; // <-- ИЗМЕНЕНИЕ
+        envStatsContainer.innerHTML = '';
         trueColorImage.src = '';
         ndviImage.src = '';
         clearModelResults();
@@ -388,7 +405,6 @@
                 <b>Max/Min NDVI:</b> ${stats.max_ndvi.toFixed(3)} / ${stats.min_ndvi.toFixed(3)}
             `;
             
-            // --- НОВЫЙ КОД ДЛЯ ОТОБРАЖЕНИЯ СТАТИСТИКИ ---
             if (data.environmental_data) {
                 let envHtml = '<h4>Параметры среды</h4>';
                 const { weather, soil, elevation } = data.environmental_data;
@@ -413,12 +429,10 @@
                 
                 envStatsContainer.innerHTML = envHtml;
             }
-            // --- КОНЕЦ НОВОГО КОДА ---
-
         })
         .catch(error => {
             imageInfo.innerHTML = `<span style="color: red;">❌ Ошибка: ${error.message}</span>`;
-            envStatsContainer.innerHTML = ''; // <-- ИЗМЕНЕНИЕ
+            envStatsContainer.innerHTML = '';
         })
         .finally(() => {
             showLoading(false);
@@ -433,7 +447,7 @@
         fetch('/detect-crops', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ bbox: currentBbox }) // Убрали resolution, т.к. на бэке 10м
+            body: JSON.stringify({ bbox: currentBbox })
         })
         .then(response => response.json())
         .then(data => {
@@ -463,7 +477,7 @@
         fetch('/segment-fields', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ bbox: currentBbox }) // Убрали resolution
+            body: JSON.stringify({ bbox: currentBbox })
         })
         .then(response => response.json())
         .then(data => {
@@ -574,6 +588,30 @@
         updateUiForLoginStatus();
     }
     
+    // // ИЗМЕНЕНИЕ: Новая функция для удаления избранного
+    async function handleDeleteFavorite(favoriteId) {
+        if (!confirm("Вы уверены, что хотите удалить это поле из избранного?")) {
+            return;
+        }
+
+        try {
+            const response = await fetch(`/favorites/${favoriteId}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${userToken}` }
+            });
+
+            if (!response.ok) {
+                 throw new Error("Не удалось удалить поле.");
+            }
+            
+            // После успешного удаления обновляем список
+            fetchFavorites();
+
+        } catch (error) {
+            alert(`Ошибка удаления: ${error.message}`);
+        }
+    }
+
     async function fetchFavorites() {
         if (!userToken) return;
         
@@ -590,10 +628,23 @@
             } else {
                 favorites.forEach(fav => {
                     const li = document.createElement('li');
-                    li.textContent = fav.name;
-                    li.dataset.bbox = JSON.stringify(fav.bbox);
+                    
+                    // <!-- ИЗМЕНЕНИЕ: Создаем сложную структуру элемента списка -->
+                    const nameSpan = document.createElement('span');
+                    nameSpan.textContent = fav.name;
+                    nameSpan.style.flexGrow = '1'; // Чтобы имя занимало все доступное место
+
+                    const deleteBtn = document.createElement('span');
+                    deleteBtn.className = 'delete-favorite';
+                    deleteBtn.innerHTML = '&times;'; // Крестик
+                    deleteBtn.dataset.id = fav.id;
+
+                    li.appendChild(nameSpan);
+                    li.appendChild(deleteBtn);
+
+                    // Обработчик для перехода к области
                     li.addEventListener('click', () => {
-                        const bbox = JSON.parse(li.dataset.bbox);
+                        const bbox = fav.bbox;
                         const bounds = [[bbox[1], bbox[0]], [bbox[3], bbox[2]]];
                         
                         currentBbox = bbox;
@@ -607,6 +658,13 @@
                         fetchInitialImages();
                         favoritesPanel.classList.remove('is-visible');
                     });
+
+                    // Обработчик для кнопки удаления
+                    deleteBtn.addEventListener('click', (event) => {
+                        event.stopPropagation(); // Важно: чтобы не сработал клик по li
+                        handleDeleteFavorite(fav.id);
+                    });
+
                     favoritesList.appendChild(li);
                 });
             }
